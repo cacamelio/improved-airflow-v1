@@ -4,8 +4,8 @@
 
 void c_local_animation_fix::update_fake()
 {
-	auto fake = &this->fake_animstate;
-	auto vars = &this->updated_vars;
+	auto fake = &fake_animstate;
+	auto vars = &updated_vars;
 
 	if (!g_cfg.visuals.chams[c_fake].enable)
 	{
@@ -57,29 +57,26 @@ void c_local_animation_fix::update_fake()
 	if (fake->state->last_update_frame == interfaces::global_vars->frame_count)
 		fake->state->last_update_frame = interfaces::global_vars->frame_count - 1;
 
-	auto layers = g_ctx.local->anim_overlay();
 	if (!(g_cfg.misc.animation_changes & 8))
-		layers[animation_layer_lean].weight = 0.f;
+		g_ctx.local->anim_overlay()[12].weight = 0.f;
 
-	vector3d old_render_angles = g_ctx.local->eye_angles();
+	vector3d old_render_angles = g_ctx.local->render_angles();
+	vector3d old_eye_angles = g_ctx.local->eye_angles();
 
 	fake->state->update(g_ctx.fake_angle);
 
+	g_ctx.local->render_angles() = g_ctx.fake_angle;
 	g_ctx.local->eye_angles() = g_ctx.fake_angle;
 
-	vars->fake_builder.store(g_ctx.local, vars->fake_bones, 0x7FF00);
-	vars->fake_builder.attachments = true;
-	vars->fake_builder.dispatch = true;
-
-	vars->fake_builder.angles = { 0.f, fake->state->abs_yaw, 0.f };
-	vars->fake_builder.eye_angles = g_ctx.fake_angle;
-	vars->fake_builder.setup();
+	g_ctx.local->setup_uninterpolated_bones(vars->fake_bones);
 
 	const auto& render_origin = g_ctx.local->get_render_origin();
 	math::change_matrix_position(vars->fake_bones, 256, render_origin, {});
 
-	g_ctx.local->eye_angles() = old_render_angles;
+	g_ctx.local->render_angles() = old_render_angles;
+	g_ctx.local->eye_angles() = old_eye_angles;
 }
+
 
 void c_local_animation_fix::update_viewmodel()
 {

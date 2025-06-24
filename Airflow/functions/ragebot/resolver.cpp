@@ -177,7 +177,13 @@ namespace resolver
 			float avg_yaw = math::normalize(math::rad_to_deg(std::atan2f((_first_angle + _second_angle) / 2.f, (__first_angle + __second_angle) / 2.f)));
 			float diff = math::normalize(current->eye_angles.y - avg_yaw);
 			
-			info.side = diff > 0.f ? side_right : side_left;
+			if (diff > 0.f)
+				info.side = side_right;
+			else if (diff < 0.f)
+				info.side = side_left;
+			else
+				info.side = side_zero;
+
 			info.resolved = true;
 			info.mode = xor_c("jitter");
 		}

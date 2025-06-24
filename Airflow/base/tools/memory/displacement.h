@@ -197,6 +197,7 @@ namespace patterns
 	extern c_address lookup_sequence;
 	extern c_address update_layer_order_preset;
 	extern c_address get_sequence_desc;
+	extern c_address equip_wearable;
 
 	extern void init();
 }

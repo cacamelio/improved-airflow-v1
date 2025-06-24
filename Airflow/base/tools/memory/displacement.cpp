@@ -222,6 +222,7 @@ namespace patterns
 	c_address lookup_sequence{};
 	c_address update_layer_order_preset{};
 	c_address get_sequence_desc{};
+	c_address equip_wearable{};
 
 	__forceinline void init()
 	{
@@ -400,6 +401,8 @@ namespace patterns
 		eye_pos_and_vectors =
 			g_memory->find_pattern(modules::client,
 				xor_c_s("55 8B EC 83 EC ? 56 8B F1 8B 8E ? ? ? ? 83 F9 ? 74 ? 0F B7 C1 C1 E0 ? 05 ? ? ? ? 74 ? C1 E9 ? 39 48 ? 75 ? 8B 08 85 C9 74 ? 8B 01 FF 90 ? ? ? ? 85 C0"));
+
+		equip_wearable = g_memory->find_pattern(modules::client, xor_c_s("55 8B EC 83 EC 10 53 8B 5D 08 57 8B F9"));
 
 		MUTATION_END
 	}

@@ -23,6 +23,7 @@ class c_auto_wall
 {
 private:
 	bool trace_to_exit(const vector3d& src, const vector3d& dir, const c_game_trace& enter_trace, c_game_trace& exit_trace, c_csplayer* shooter);
+	void clip_trace_to_players(const vector3d& start, const vector3d& end, unsigned int mask, i_trace_filter* filter, c_game_trace* tr, should_hit_fn_t should_hit);
 	void clip_trace_to_player(const vector3d& src, const vector3d& dst, c_game_trace& trace, c_csplayer* const player, const should_hit_fn_t& should_hit_fn);
 
 	bool handle_bullet_penetration(c_csplayer* const shooter, const weapon_info_t* const wpn_data, const c_game_trace& enter_trace, vector3d& src, const vector3d& dir, int& pen_count, float& cur_dmg, const float pen_modifier);
