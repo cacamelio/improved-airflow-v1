@@ -9,22 +9,24 @@ namespace rage_tools
 {
 	constexpr int max_traces = 48;
 
-	rage_weapon_t zeus_config = { true, false, false, 40, 101, 101, 80, 80, 0, 0, 0, 1, 0, {} };
+	rage_weapon_t zeus_config = { true, false, false, false, 40, 101, 101, 80, 80, 0, 0, 0, 1, 0, {} };
 
 	constexpr int total_seeds = 255;
 
 	vector2d calc_spread_angle(int bullets, float recoil_index, int i)
 	{
-		auto index = g_ctx.weapon->item_definition_index();
-
-		math::random_seed(i + 1u);
+		const auto index = g_ctx.weapon->item_definition_index();
+		const auto random_seed = i + 1u;
+		math::random_seed(random_seed);
 
 		auto v1 = math::random_float(0.f, 1.f);
 		auto v2 = math::random_float(0.f, M_PI * 2.f);
 
 		float v3{}, v4{};
 		if (cvars::weapon_accuracy_shotgun_spread_patterns->get_int() > 0)
+		{
 			func_ptrs::calc_shotgun_spread(index, 0, static_cast<int>(bullets * recoil_index), &v4, &v3);
+		}
 		else
 		{
 			v3 = math::random_float(0.f, 1.f);
@@ -33,14 +35,9 @@ namespace rage_tools
 
 		if (recoil_index < 3.f && index == weapon_negev)
 		{
-			for (auto i = 3; i > recoil_index; --i)
-			{
-				v1 *= v1;
-				v3 *= v3;
-			}
-
-			v1 = 1.f - v1;
-			v3 = 1.f - v3;
+			const auto reduction_factor = 1.f - std::pow(v1, 3.f - recoil_index);
+			v1 = reduction_factor;
+			v3 = reduction_factor;
 		}
 
 		const auto inaccuracy = v1 * g_engine_prediction->predicted_inaccuracy;
@@ -204,15 +201,20 @@ namespace rage_tools
 
 		if (g_cfg.rage.weapon[auto_snipers].enable && g_ctx.weapon->is_auto_sniper())
 			return g_cfg.rage.weapon[auto_snipers];
-		else if (g_cfg.rage.weapon[heavy_pistols].enable && g_ctx.weapon->is_heavy_pistols())
+
+		if (g_cfg.rage.weapon[heavy_pistols].enable && g_ctx.weapon->is_heavy_pistols())
 			return g_cfg.rage.weapon[heavy_pistols];
-		else if (g_cfg.rage.weapon[pistols].enable && g_ctx.weapon->is_pistols())
+
+		if (g_cfg.rage.weapon[pistols].enable && g_ctx.weapon->is_pistols())
 			return g_cfg.rage.weapon[pistols];
-		else if (g_cfg.rage.weapon[scout].enable && g_ctx.weapon->item_definition_index() == weapon_ssg08)
+
+		if (g_cfg.rage.weapon[scout].enable && g_ctx.weapon->item_definition_index() == weapon_ssg08)
 			return g_cfg.rage.weapon[scout];
-		else if (g_cfg.rage.weapon[awp].enable && g_ctx.weapon->item_definition_index() == weapon_awp)
+
+		if (g_cfg.rage.weapon[awp].enable && g_ctx.weapon->item_definition_index() == weapon_awp)
 			return g_cfg.rage.weapon[awp];
-		else if (g_ctx.weapon->is_taser())
+
+		if (g_ctx.weapon->is_taser())
 			return zeus_config;
 
 		return g_cfg.rage.weapon[global];
@@ -382,6 +384,27 @@ namespace rage_tools
 		return can_hit_hitbox_wrap(start, end, player, hitbox, record, matrix);
 	}
 
+	constexpr float accuracy_round_factor = 1000000.f;
+
+	int get_maximum_valid_inaccuracy(c_animstate* state, weapon_info_t* weapon_info)
+	{
+		int maximum_accuracy{ 0 };
+		if (state->landing || g_ctx.local->fall_velocity() > 0.f)
+			return static_cast<int>(weapon_info->inaccuracy_land * accuracy_round_factor);
+
+		if (g_utils->on_ground())
+		{
+			if (g_ctx.local->flags() & fl_ducking && !g_anti_aim->is_fake_ducking())
+				return static_cast<int>((g_ctx.scoped ? weapon_info->inaccuracy_crouch_alt : weapon_info->inaccuracy_crouch) * accuracy_round_factor);
+
+			return static_cast<int>((g_ctx.scoped ? weapon_info->inaccuracy_stand_alt : weapon_info->inaccuracy_stand) * accuracy_round_factor);
+		}
+		else
+			return static_cast<int>(weapon_info->inaccuracy_jump * accuracy_round_factor);
+
+		return 0;
+	}
+
 	bool is_accuracy_valid(c_csplayer* player, point_t& point, float amount, float* out_chance)
 	{
 #ifdef _DEBUG
@@ -429,43 +452,17 @@ namespace rage_tools
 		if (debug_hitchance)
 		{
 			current_spread = g_ctx.spread;
-			g_render->world_to_screen(point.position, spread_point);
+			g_render.world_to_screen(point.position, spread_point);
 		}
 #endif
-		const auto round = [](const float accuracy) { return roundf(accuracy * 1000.f) / 1000.f; };
-
-		float accuracy_limit = 0.f;
-
-		if (state->landing || g_ctx.local->fall_velocity() > 0.f)
-			accuracy_limit = weapon_info->inaccuracy_land;
-		else if (g_utils->on_ground())
+		if (!g_rage_bot->weapon_config.strict_mode)
 		{
-			if (g_ctx.local->flags() & fl_ducking && !g_anti_aim->is_fake_ducking())
-				accuracy_limit = round(g_ctx.scoped ? weapon_info->inaccuracy_crouch_alt : weapon_info->inaccuracy_crouch);
-			else
-				accuracy_limit = round(g_ctx.scoped ? weapon_info->inaccuracy_stand_alt : weapon_info->inaccuracy_stand);
-		}
-		else
-			accuracy_limit = weapon_info->inaccuracy_jump;
+			int maximum_accuracy = get_maximum_valid_inaccuracy(state, weapon_info);
+			int predicted_accuracy = static_cast<int>(g_engine_prediction->predicted_inaccuracy * accuracy_round_factor);
 
-		auto heavy_weapon = g_ctx.weapon->item_definition_index() == weapon_awp;
-
-		static int chance_ticks2, chance_ticks;
-
-		float rounded_acuracy = round(g_engine_prediction->predicted_inaccuracy);
-
-		bool valid_accuracy = g_ctx.spread > 0.f && g_ctx.spread <= g_ctx.ideal_spread && (g_ctx.spread / g_ctx.ideal_spread) >= amount
-			|| accuracy_limit > 0.f && rounded_acuracy == accuracy_limit;
-
-		if (!g_rage_bot->weapon_config.strict_mode && !heavy_weapon && point.center && !point.limbs)
-		{
-			if (valid_accuracy)
-				++chance_ticks;
-
-			if (chance_ticks >= 5)
+			if (maximum_accuracy > 0 && predicted_accuracy > 0 && predicted_accuracy == maximum_accuracy)
 			{
 				*out_chance = amount;
-				chance_ticks = 0;
 				return true;
 			}
 		}
@@ -483,7 +480,7 @@ namespace rage_tools
 			if (debug_hitchance)
 			{
 				vector2d scr_end;
-				if (g_render->world_to_screen(end, scr_end))
+				if (g_render.world_to_screen(end, scr_end))
 					spread_points.emplace_back(scr_end);
 			}
 #endif
@@ -509,24 +506,24 @@ namespace rage_tools
 
 		bool valid_weapon = g_ctx.weapon->is_auto_sniper() || g_ctx.weapon->is_heavy_pistols();
 
-		if (!g_rage_bot->weapon_config.strict_mode && g_utils->on_ground() && valid_weapon && point.center && !point.limbs)
-		{
-			static float old_hitchance = 0.f;
-
-			if (old_hitchance != *out_chance)
+		/*	if (!g_rage_bot.weapon_config.strict_mode && g_utils.on_ground() && valid_weapon && point.center && !point.limbs)
 			{
-				chance_ticks2 = 0;
-				old_hitchance = *out_chance;
-			}
-			else
-				++chance_ticks2;
+				static float old_hitchance = 0.f;
 
-			if (chance_ticks2 >= 3 || g_exploits->dt_bullet == 1)
-			{
-				chance_ticks2 = 0;
-				return true;
-			}
-		}
+				if (old_hitchance != *out_chance)
+				{
+					chance_ticks2 = 0;
+					old_hitchance = *out_chance;
+				}
+				else
+					++chance_ticks2;
+
+				if (chance_ticks2 >= 3 || g_exploits.dt_bullet == 1)
+				{
+					chance_ticks2 = 0;
+					return true;
+				}
+			}*/
 
 		return ((float)hits / (float)total_seeds) >= amount;
 	}
@@ -628,42 +625,37 @@ namespace rage_tools
 			}
 			else
 			{
-				if (hitbox == hitbox_stomach)
+				points.emplace_back(center, true);
+
+				switch (hitbox)
 				{
-					points.emplace_back(center, true);
+				case hitbox_stomach:
 					points.emplace_back(vector3d(center.x, center.y, min.z + body_scale), false);
 					points.emplace_back(vector3d(center.x, center.y, max.z - body_scale), false);
 					points.emplace_back(vector3d{ center.x, max.y - body_scale, center.z }, false);
-				}
-				else if (hitbox == hitbox_pelvis || hitbox == hitbox_upper_chest)
-				{
-					points.emplace_back(center, true);
+					break;
+				case hitbox_pelvis:
+				case hitbox_upper_chest:
 					points.emplace_back(vector3d(center.x, center.y, max.z + body_scale), false);
 					points.emplace_back(vector3d(center.x, center.y, min.z - body_scale), false);
-				}
-				else if (hitbox == hitbox_lower_chest || hitbox == hitbox_chest)
-				{
-					points.emplace_back(center, true);
+					break;
+				case hitbox_lower_chest:
+				case hitbox_chest:
 					points.emplace_back(vector3d(center.x, center.y, max.z + body_scale), false);
 					points.emplace_back(vector3d(center.x, center.y, min.z - body_scale), false);
-
 					points.emplace_back(vector3d{ center.x, max.y - body_scale, center.z }, false);
-				}
-				else if (hitbox == hitbox_right_calf || hitbox == hitbox_left_calf)
-				{
-					points.emplace_back(center, true);
+					break;
+				case hitbox_right_calf:
+				case hitbox_left_calf:
 					points.emplace_back(vector3d{ max.x - (bbox->radius / 2.f), max.y, max.z }, false);
-				}
-				else if (hitbox == hitbox_right_thigh || hitbox == hitbox_left_thigh)
-				{
-					points.emplace_back(center, true);
-				}
-				else if (hitbox == hitbox_right_upper_arm || hitbox == hitbox_left_upper_arm)
-				{
+					break;
+				case hitbox_right_upper_arm:
+				case hitbox_left_upper_arm:
 					points.emplace_back(vector3d{ max.x + bbox->radius, center.y, center.z }, false);
+					break;
+				default:
+					break;
 				}
-				else
-					points.emplace_back(center, true);
 			}
 
 			if (points.empty())
