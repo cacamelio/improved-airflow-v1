@@ -2,403 +2,241 @@
 #include "../../includes.h"
 #include "server_animations.h"
 
-// proceed server-sided animation logic on client
-// allows to play animations without delays
-// and make local animations a WAAY better
-// credits:
-// UC (activity modifiers)
-// infirms (researching)
+#define CSGO_ANIM_LOWER_CATCHUP_IDLE	100.0f
+#define CSGO_ANIM_AIM_NARROW_WALK	0.8f
+#define CSGO_ANIM_AIM_NARROW_RUN	0.5f
+#define CSGO_ANIM_AIM_NARROW_CROUCHMOVING	0.5f
+#define CSGO_ANIM_LOWER_CATCHUP_WITHIN	3.0f
+#define CSGO_ANIM_LOWER_REALIGN_DELAY	1.1f
+#define CSGO_ANIM_READJUST_THRESHOLD	120.0f
+#define EIGHT_WAY_WIDTH 22.5f
+#define CSGO_ANIM_WALK_TO_RUN_TRANSITION_SPEED 2.0f
+#define CSGO_ANIM_ONGROUND_FUZZY_APPROACH 8.0f
+#define CSGO_ANIM_ONGROUND_FUZZY_APPROACH_CROUCH 16.0f
+#define CSGO_ANIM_LADDER_CLIMB_COVERAGE 100.0f
+#define CSGO_ANIM_RUN_ANIM_PLAYBACK_MULTIPLIER 0.85f
+#define CS_PLAYER_SPEED_RUN 260.0f
+#define CS_PLAYER_SPEED_VIP 227.0f
+#define CS_PLAYER_SPEED_SHIELD 160.0f
+#define CS_PLAYER_SPEED_HAS_HOSTAGE 200.0f
+#define CS_PLAYER_SPEED_STOPPED 1.0f
+#define CS_PLAYER_SPEED_OBSERVER 900.0f
+#define CS_PLAYER_SPEED_DUCK_MODIFIER 0.34f
+#define CS_PLAYER_SPEED_WALK_MODIFIER 0.52f
+#define CS_PLAYER_SPEED_CLIMB_MODIFIER 0.34f
+#define CS_PLAYER_HEAVYARMOR_FLINCH_MODIFIER 0.5f
+#define CS_PLAYER_DUCK_SPEED_IDEAL 8.0f
 
 namespace server_animations
 {
-	// https://www.unknowncheats.me/forum/3146777-post4.html
-#pragma runtime_checks("", off)
-	__forceinline float get_sequence_dist(int sequence)
-	{
-		auto hdr = g_ctx.local->get_studio_hdr();
-		if (!hdr)
-			return -1.f;
-
-		static auto get_sequence_linear_motion = patterns::get_sequence_linear_motion.as<void(__fastcall*)(void*, int, float*, vector3d*)>();
-
-		auto poses = g_ctx.local->pose_parameter();
-
-		vector3d retn;
-		get_sequence_linear_motion(hdr, sequence, poses.data(), &retn);
-		return retn.length(false);
-	}
-#pragma runtime_checks("", restore)
-
-	__forceinline void set_sequence(c_animstate* state, c_animation_layers* layer, const int& activity)
-	{
-		state->set_layer_sequence(layer, state->select_sequence_from_activity_modifier(activity));
-	}
-
-	void play_landing_animations(c_animstate* state, local_anims_t* local_anim, c_animation_layers* layers)
-	{
-		auto rebuilt_state = &local_anim->rebuilt_state;
-
-		auto land_or_climb = &layers[animation_layer_movement_land_or_climb];
-		auto jump_or_fall = &layers[animation_layer_movement_jump_or_fall];
-
-		auto ground_entity = (c_baseentity*)interfaces::entity_list->get_entity_handle(g_ctx.local->ground_entity());
-
-		auto& flags = g_ctx.local->flags();
-
-		bool landed = (flags & fl_onground) && !(local_anim->old_flags & fl_onground);
-		bool jumped = !(flags & fl_onground) && (local_anim->old_flags & fl_onground);
-
-		local_anim->old_flags = flags;
-
-		float distance_fell = 0;
-		if (jumped)
-			rebuilt_state->left_ground_height = rebuilt_state->position_current.z;
-
-		if (landed)
-		{
-			distance_fell = std::abs(rebuilt_state->left_ground_height - rebuilt_state->position_current.z);
-			float distance_bias_range = math::bias(math::reval_map_clamped(rebuilt_state->next_twitch_time, 12.0f, 72.0f, 0.0f, 1.0f), 0.4f);
-			rebuilt_state->land_anim_multiplier = std::clamp(math::bias(state->duration_in_air, 0.3f), 0.1f, 1.0f);
-			rebuilt_state->duck_additional = std::max<float>(rebuilt_state->land_anim_multiplier, distance_bias_range);
-		}
-		else
-		{
-			rebuilt_state->duck_additional = math::approach(0, rebuilt_state->duck_additional, state->last_update_increment * 2);
-		}
-
-		bool old_on_ladder = local_anim->old_movetype == movetype_ladder;
-		bool on_ladder = g_ctx.local->move_type() == movetype_ladder;
-
-		if (!old_on_ladder && on_ladder)
-			set_sequence(state, land_or_climb, act_csgo_climb_ladder);
-		else if (old_on_ladder && !on_ladder)
-			set_sequence(state, land_or_climb, act_csgo_fall);
-		else
-		{
-			if ((flags & fl_onground))
-			{
-				if (!local_anim->landing && landed)
-				{
-					int activity = state->duration_in_air > 1.f ? act_csgo_land_heavy : act_csgo_land_light;
-					set_sequence(state, land_or_climb, activity);
-
-					local_anim->landing = true;
-				}
-			}
-			else
-				local_anim->landing = false;
-
-			if ((g_ctx.jump_buttons & in_jump) && !ground_entity)
-				set_sequence(state, jump_or_fall, act_csgo_jump);
-		}
-
-		local_anim->old_movetype = g_ctx.local->move_type();
-	}
-
-	void play_idle_animations(c_animstate* state, local_anims_t* local_anim, c_animation_layers* layers)
-	{
-		auto rebuilt_state = &local_anim->rebuilt_state;
-
-		auto adjust = &layers[animation_layer_adjust];
-		auto move = &layers[animation_layer_movement_move];
-		auto strafe_change = &layers[animation_layer_movement_strafechange];
-
-		bool started_moving_this_frame = false;
-		bool stopped_moving_this_frame = false;
-
-		if (rebuilt_state->velocity_length_xy > 0.f)
-		{
-			stopped_moving_this_frame = false;
-
-			started_moving_this_frame = (rebuilt_state->duration_moving <= 0);
-			rebuilt_state->duration_still = 0;
-			rebuilt_state->duration_moving += state->last_update_increment;
-		}
-		else
-		{
-			started_moving_this_frame = false;
-
-			stopped_moving_this_frame = (rebuilt_state->duration_still <= 0);
-			rebuilt_state->duration_moving = 0;
-			rebuilt_state->duration_still += state->last_update_increment;
-		}
-
-		if (!rebuilt_state->adjust_started && stopped_moving_this_frame && rebuilt_state->on_ground && !rebuilt_state->on_ladder && local_anim->landing && rebuilt_state->stutter_step < 50.f)
-		{
-			set_sequence(state, adjust, act_csgo_idle_adjust_stoppedmoving);
-			rebuilt_state->adjust_started = true;
-		}
-
-		int layer_activity = g_ctx.local->get_sequence_activity(adjust->sequence);
-
-		if (layer_activity == act_csgo_idle_adjust_stoppedmoving || layer_activity == act_csgo_idle_turn_balanceadjust)
-		{
-			if (rebuilt_state->adjust_started && rebuilt_state->speed_as_portion_of_crouch_top_speed <= 0.25f)
-			{
-				float previous_weight = adjust->weight;
-				state->increment_layer_cycle(adjust, false);
-				state->set_layer_weight(adjust, state->get_layer_ideal_weight_from_seq_cycle(adjust));
-				state->set_layer_weight_rate(adjust, previous_weight);
-
-				rebuilt_state->adjust_started = !(state->is_layer_sequence_finished(adjust, state->last_update_increment));
-			}
-			else
-			{
-				rebuilt_state->adjust_started = false;
-
-				float previous_weight = adjust->weight;
-				state->set_layer_weight(adjust, math::approach(0, previous_weight, state->last_update_increment * 5.f));
-				state->set_layer_weight_rate(adjust, previous_weight);
-			}
-		}
-
-		if (rebuilt_state->velocity_length_xy <= 1.f && rebuilt_state->on_ground && !rebuilt_state->on_ladder && !local_anim->landing
-			&& state->last_update_increment > 0 && std::abs(math::angle_diff(state->abs_yaw_last, state->abs_yaw) / state->last_update_increment > 120.f))
-		{
-			set_sequence(state, adjust, act_csgo_idle_turn_balanceadjust);
-			rebuilt_state->adjust_started = true;
-		}
-
-		if (rebuilt_state->velocity_length_xy > 0 && rebuilt_state->on_ground)
-		{
-			float raw_yaw_ideal = (atan2(-rebuilt_state->velocity[1], -rebuilt_state->velocity[0]) * 180 / M_PI);
-			if (raw_yaw_ideal < 0)
-				raw_yaw_ideal += 360;
-
-			rebuilt_state->move_yaw_ideal = math::normalize(math::angle_diff(raw_yaw_ideal, rebuilt_state->abs_yaw));
-		}
-
-		rebuilt_state->move_yaw_current_to_ideal = math::normalize(math::angle_diff(rebuilt_state->move_yaw_ideal, rebuilt_state->move_yaw));
-
-		if (started_moving_this_frame && rebuilt_state->move_weight <= 0.f)
-		{
-			rebuilt_state->move_yaw = rebuilt_state->move_yaw_ideal;
-
-			int move_sequence = move->sequence;
-			if (move_sequence != -1)
-			{
-				auto hdr = g_ctx.local->get_studio_hdr();
-				if (hdr)
-				{
-					auto sequence_desc = hdr->get_sequence_desc(move->sequence);
-					if (sequence_desc)
-					{
-						int anim_tags = *(int*)((std::uintptr_t)sequence_desc + 0xC4);
-						if (anim_tags > 0)
-						{
-							// fuck it.
-							// assign leg dir on start of running
-							// anyway it gets the same angle as server
-							// for moving animations weight should be rebuilt btw
-							rebuilt_state->primary_cycle = state->primary_cycle;
-						}
-					}
-				}
-			}
-		}
-		else
-		{
-			if (strafe_change->weight >= 1)
-				rebuilt_state->move_yaw = rebuilt_state->move_yaw_ideal;
-			else
-			{
-				float move_weight = math::interpolate_inversed(rebuilt_state->anim_duck_amount,
-					std::clamp(rebuilt_state->speed_as_portion_of_walk_top_speed, 0.f, 1.f),
-					std::clamp(rebuilt_state->speed_as_portion_of_crouch_top_speed, 0.f, 1.f));
-
-				float ratio = math::bias(move_weight, 0.18f) + 0.1f;
-
-				rebuilt_state->move_yaw = math::normalize(rebuilt_state->move_yaw + (rebuilt_state->move_yaw_current_to_ideal * ratio));
-			}
-		}
-	}
-
-	void play_move_animations(c_animstate* state, local_anims_t* local_anim, c_animation_layers* layers)
-	{
-		auto rebuilt_state = &local_anim->rebuilt_state;
-
-		auto hdr = g_ctx.local->get_studio_hdr();
-		if (!hdr)
-			return;
-
-		static auto get_weapon_prefix = patterns::get_weapon_prefix.as<const char* (__thiscall*)(void*)>();
-
-		auto move = &layers[animation_layer_movement_move];
-		auto land_or_climb = &layers[animation_layer_movement_land_or_climb];
-
-		char weapon_move_sequence[64]{};
-		sprintf_s(weapon_move_sequence, xor_c("move_%s"), get_weapon_prefix(state));
-
-		int weapon_move_seq = func_ptrs::lookup_sequence(g_ctx.local, weapon_move_sequence);
-		if (weapon_move_seq == -1)
-			weapon_move_seq = func_ptrs::lookup_sequence(g_ctx.local, xor_c("move"));
-
-		// rebuilt formulas again
-		{
-			float move_weight = math::interpolate_inversed(rebuilt_state->anim_duck_amount, std::clamp(rebuilt_state->speed_as_portion_of_walk_top_speed, 0.f, 1.f),
-				std::clamp(rebuilt_state->speed_as_portion_of_crouch_top_speed, 0.f, 1.f));
-
-			if (rebuilt_state->move_weight <= move_weight)
-				rebuilt_state->move_weight = move_weight;
-			else
-			{
-				rebuilt_state->move_weight = math::approach(move_weight, rebuilt_state->move_weight, state->last_update_increment
-					* math::reval_map_clamped(rebuilt_state->stutter_step, 0.0f, 100.0f, 2, 20));
-			}
-
-			vector3d move_yaw_direction;
-			math::angle_to_vectors({ 0, math::normalize(rebuilt_state->abs_yaw + rebuilt_state->move_yaw + 180.f), 0 }, move_yaw_direction);
-			float yaw_delta_abs = abs(rebuilt_state->velocity_normalized_non_zero.dot(move_yaw_direction));
-			rebuilt_state->move_weight *= math::bias(yaw_delta_abs, 0.2f);
-		}
-
-		float move_weight_with_air_smooth = rebuilt_state->move_weight * rebuilt_state->in_air_smooth_value;
-		move_weight_with_air_smooth *= std::max<float>((1.0f - land_or_climb->weight), 0.55f);
-
-		float move_cycle_rate = 0;
-		if (rebuilt_state->velocity_length_xy > 0)
-		{
-			move_cycle_rate = g_ctx.local->get_sequence_cycle_rate(hdr, weapon_move_seq);
-
-			float dist = get_sequence_dist(weapon_move_seq);
-
-			float sequence_ground_speed = std::max<float>(dist / (1.0f / move_cycle_rate), 0.001f);
-
-			move_cycle_rate *= rebuilt_state->velocity_length_xy / sequence_ground_speed;
-			move_cycle_rate *= math::interpolate_inversed(rebuilt_state->walk_run_transition, 1.0f, 0.85f);
-		}
-
-		float local_cycle_increment = (move_cycle_rate * state->last_update_increment);
-		rebuilt_state->primary_cycle = math::clamp_cycle(rebuilt_state->primary_cycle + local_cycle_increment);
-		/*
-			printf("\n weapon_move_seq-> %d\n local_cycle_increment-> %f\n rebuilt_state->primary_cycle-> %f\n move_weight_with_air_smooth-> %f\n",
-				weapon_move_seq, local_cycle_increment, rebuilt_state->primary_cycle, move_weight_with_air_smooth);*/
-
-		rebuilt_state->update_layer(move, weapon_move_seq, local_cycle_increment, rebuilt_state->primary_cycle, move_weight_with_air_smooth, animation_layer_movement_move);
-	}
-
-	void update_strafe_state(c_animstate* state, local_anims_t* local_anim)
-	{
-		auto rebuilt_state = &local_anim->rebuilt_state;
-
-		auto buttons = g_ctx.cmd->buttons;
-
-		vector3d forward;
-		vector3d right;
-		vector3d up;
-
-		math::angle_to_vectors(vector3d(0, state->abs_yaw, 0), forward, right, up);
-		right = right.normalized();
-
-		auto velocity = rebuilt_state->velocity_normalized_non_zero;
-		auto speed = rebuilt_state->speed_as_portion_of_walk_top_speed;
-
-		float vel_to_right_dot = velocity.dot(right);
-		float vel_to_foward_dot = velocity.dot(forward);
-
-		bool move_right = (buttons & (in_moveright)) != 0;
-		bool move_left = (buttons & (in_moveleft)) != 0;
-		bool move_forward = (buttons & (in_forward)) != 0;
-		bool move_backward = (buttons & (in_back)) != 0;
-
-		bool strafe_right = (speed >= 0.73f && move_right && !move_left && vel_to_right_dot < -0.63f);
-		bool strafe_left = (speed >= 0.73f && move_left && !move_right && vel_to_right_dot > 0.63f);
-		bool strafe_forward = (speed >= 0.65f && move_forward && !move_backward && vel_to_foward_dot < -0.55f);
-		bool strafe_backward = (speed >= 0.65f && move_backward && !move_forward && vel_to_foward_dot > 0.55f);
-
-		g_ctx.local->strafing() = (strafe_right || strafe_left || strafe_forward || strafe_backward);
-	}
-
-	void update_rebuilt_state_vars(c_animstate* state, local_anims_t* local_anim, c_animation_layers* layers)
-	{
-		auto rebuilt_state = &local_anim->rebuilt_state;
-		auto velocity = g_ctx.local->velocity();
-		auto max_speed_run = g_ctx.weapon ?
-			std::max<float>(g_ctx.local->is_scoped() ? g_ctx.weapon_info->max_speed_alt : g_ctx.weapon_info->max_speed, 0.001f)
-			: 260.f;
-
-		rebuilt_state->player = g_ctx.local;
-		rebuilt_state->weapon = state->weapon;
-		rebuilt_state->weapon_last = state->weapon_last;
-		rebuilt_state->weapon_last_bone_setup = state->weapon_last_bone_setup;
-
-		velocity.z = 0.f;
-
-		// update server sided vars
-		{
-			rebuilt_state->on_ground = g_ctx.local->flags() & fl_onground;
-			rebuilt_state->on_ladder = g_ctx.local->move_type() == movetype_ladder;
-			rebuilt_state->position_current = g_ctx.local->origin();
-			rebuilt_state->abs_yaw = state->abs_yaw;
-
-			rebuilt_state->anim_duck_amount = std::clamp<float>(math::approach(std::clamp(g_ctx.local->duck_amount() + rebuilt_state->duck_additional, 0.f, 1.f),
-				rebuilt_state->anim_duck_amount, state->last_update_increment * 6.0f), 0.f, 1.f);
-		}
-
-		// logic from CCSGOPlayerAnimState::SetUpVelocity
-		{
-			rebuilt_state->velocity = math::approach(velocity, rebuilt_state->velocity, state->last_update_increment * 2000.f);
-			rebuilt_state->velocity_normalized = rebuilt_state->velocity.normalized();
-
-			rebuilt_state->velocity_length_xy = std::min<float>(rebuilt_state->velocity.length(false), 260.f);
-
-			if (rebuilt_state->velocity_length_xy > 0)
-				rebuilt_state->velocity_normalized_non_zero = rebuilt_state->velocity_normalized;
-
-			rebuilt_state->speed_as_portion_of_run_top_speed = std::clamp(rebuilt_state->velocity_length_xy / max_speed_run, 0.f, 1.f);
-			rebuilt_state->speed_as_portion_of_walk_top_speed = rebuilt_state->velocity_length_xy / (max_speed_run * 0.52f);
-			rebuilt_state->speed_as_portion_of_crouch_top_speed = rebuilt_state->velocity_length_xy / (max_speed_run * 0.34f);
-		}
-
-		// logic from CCSGOPlayerAnimState::SetUpMovement
-		{
-			if (rebuilt_state->walk_run_transition > 0 && rebuilt_state->walk_run_transition < 1)
-			{
-				if (rebuilt_state->walk_to_run_transition_state == 0)
-					rebuilt_state->walk_run_transition += state->last_update_increment * 2.f;
-				else
-					rebuilt_state->walk_run_transition -= state->last_update_increment * 2.f;
-
-				rebuilt_state->walk_run_transition = std::clamp(rebuilt_state->walk_run_transition, 0.f, 1.f);
-			}
-
-			if (rebuilt_state->velocity_length_xy > (260.f * 0.52f) && rebuilt_state->walk_to_run_transition_state == 1)
-			{
-				rebuilt_state->walk_to_run_transition_state = 0;
-				rebuilt_state->walk_run_transition = std::max<float>(0.01f, rebuilt_state->walk_run_transition);
-			}
-			else if (rebuilt_state->velocity_length_xy < (260.f * 0.52f) && rebuilt_state->walk_to_run_transition_state == 0)
-			{
-				rebuilt_state->walk_to_run_transition_state = 1;
-				rebuilt_state->walk_run_transition = std::min<float>(0.99f, rebuilt_state->walk_run_transition);
-			}
-
-			if (g_ctx.local->move_state() != rebuilt_state->previous_move_state)
-				rebuilt_state->stutter_step += 10;
-
-			rebuilt_state->previous_move_state = g_ctx.local->move_state();
-			rebuilt_state->stutter_step = std::clamp(math::approach(0, rebuilt_state->stutter_step, state->last_update_increment * 40), 0.f, 100.f);
-
-			rebuilt_state->in_air_smooth_value = math::approach(state->on_ground ? 1 : 0,
-				rebuilt_state->in_air_smooth_value, math::interpolate_inversed(rebuilt_state->anim_duck_amount, 8.f, 16.f)
-				* state->last_update_increment);
-
-			rebuilt_state->in_air_smooth_value = std::clamp(rebuilt_state->in_air_smooth_value, 0.f, 1.f);
-		}
-	}
-
-	void run(c_animstate* state, local_anims_t* local_anim, c_animation_layers* layers)
-	{
-		play_landing_animations(state, local_anim, layers);
-	}
-
-	// change already calculated values to proper one
-	// and apply them on matrix layer
-	void recalculate(c_animstate* state, local_anims_t* local_anim, c_animation_layers* layers)
-	{
-		update_rebuilt_state_vars(state, local_anim, layers);
-		play_idle_animations(state, local_anim, layers);
-		play_move_animations(state, local_anim, layers);
-		update_strafe_state(state, local_anim);
-	}
+    __forceinline void set_sequence(c_animstate* state, c_animation_layers* layer, const int& activity, int idx)
+    {
+        state->set_layer_sequence(layer, state->select_sequence_from_activity_modifier(activity), idx);
+    }
+    void setup_movement(c_animstate* state, local_anims_t* local_anim, c_animation_layers* layers)
+    {
+        auto rebuilt_state = &local_anim->rebuilt_state;
+
+        auto land_or_climb = &layers[animation_layer_movement_land_or_climb];
+        auto jump_or_fall = &layers[animation_layer_movement_jump_or_fall];
+
+        auto ground_entity = (c_baseentity*)interfaces::entity_list->get_entity_handle(g_ctx.local->ground_entity());
+
+        bool old_on_ladder = local_anim->old_movetype == movetype_ladder;
+        bool on_ladder = g_ctx.local->move_type() == movetype_ladder;
+
+        auto& flags = g_ctx.local->flags();
+
+        bool landed = (flags & fl_onground) && !(local_anim->old_flags & fl_onground);
+        bool jumped = !(flags & fl_onground) && (local_anim->old_flags & fl_onground);
+
+        local_anim->old_flags = flags;
+        local_anim->old_movetype = g_ctx.local->move_type();
+
+        auto entered_ladder = on_ladder && !old_on_ladder;
+        auto left_ladder = !on_ladder && old_on_ladder;
+
+        if (entered_ladder)
+            state->set_layer_sequence(land_or_climb, state->select_sequence_from_activity_modifier(act_csgo_climb_ladder), animation_layer_movement_jump_or_fall);
+
+        if ((g_ctx.cmd->buttons & in_jump) && ground_entity)
+            state->set_layer_sequence(jump_or_fall, state->select_sequence_from_activity_modifier(act_csgo_jump), animation_layer_movement_jump_or_fall);
+
+        if (flags & fl_onground)
+        {
+            if (!local_anim->landing && landed)
+            {
+                int activity = state->duration_in_air > 1.f ? act_csgo_land_heavy : act_csgo_land_light;
+                state->set_layer_sequence(land_or_climb, state->select_sequence_from_activity_modifier(activity), animation_layer_movement_land_or_climb);
+
+                local_anim->landing = true;
+            }
+        }
+        else
+        {
+            if (!(g_ctx.cmd->buttons & in_jump) && (jumped || left_ladder))
+                state->set_layer_sequence(jump_or_fall, state->select_sequence_from_activity_modifier(act_csgo_fall), animation_layer_movement_jump_or_fall);
+
+            local_anim->landing = false;
+        }
+
+    }
+
+    void setup_velocity(c_animstate* state, float curtime) {
+        auto player = reinterpret_cast<c_csplayer*>(state->player);
+        auto hdr = player->get_studio_hdr();
+        if (!hdr)
+            return;
+
+        auto weapon = (c_basecombatweapon*)(interfaces::entity_list->get_entity_handle(player->active_weapon()));
+        if (!weapon)
+            return;
+
+        auto weapon_info = interfaces::weapon_system->get_weapon_data(weapon->item_definition_index());
+        auto max_speed = weapon && weapon_info
+            ? std::max<float>((player->is_scoped() ? weapon_info->max_speed_alt : weapon_info->max_speed), 0.001f)
+            : CS_PLAYER_SPEED_RUN;
+
+        auto abs_velocity = player->velocity();
+
+        // Save vertical velocity and discard z-component
+        state->velocity_length_z = abs_velocity.z;
+        abs_velocity.z = 0.f;
+
+        // Detect acceleration
+        state->player_is_accelerating = (state->velocity_last.length_sqr() < abs_velocity.length_sqr());
+
+        // Smooth velocity transition
+        state->velocity = math::approach(abs_velocity, state->velocity, state->last_update_increment * 2000);
+        state->velocity_normalized = state->velocity.normalized();
+
+        // Compute horizontal velocity length
+        state->velocity_length_xy = std::min<float>(state->velocity.length(), CS_PLAYER_SPEED_RUN);
+
+        if (state->velocity_length_xy > 0) {
+            state->velocity_normalized_non_zero = state->velocity_normalized;
+        }
+
+        // Compute normalized speed portions
+        float flMaxSpeedRun = max_speed > 0 ? max_speed : CS_PLAYER_SPEED_RUN;
+        state->speed_as_portion_of_run_top_speed = std::clamp<float>(state->velocity_length_xy / flMaxSpeedRun, 0, 1);
+        state->speed_as_portion_of_walk_top_speed = state->velocity_length_xy / (flMaxSpeedRun * CS_PLAYER_SPEED_WALK_MODIFIER);
+        state->speed_as_portion_of_crouch_top_speed = state->velocity_length_xy / (flMaxSpeedRun * CS_PLAYER_SPEED_DUCK_MODIFIER);
+
+        if (state->speed_as_portion_of_walk_top_speed >= 1) {
+            state->static_approach_speed = state->velocity_length_xy;
+        }
+        else if (state->speed_as_portion_of_walk_top_speed < 0.5f) {
+            state->static_approach_speed = math::approach(80, state->static_approach_speed, state->last_update_increment * 60);
+        }
+
+        // Movement frame detection
+        bool started_moving_this_frame = false;
+        bool stopped_moving_this_frame = false;
+
+        if (state->velocity_length_xy > 0) {
+            started_moving_this_frame = (state->duration_moving <= 0);
+            state->duration_still = 0;
+            state->duration_moving += state->last_update_increment;
+        }
+        else {
+            stopped_moving_this_frame = (state->duration_still <= 0);
+            state->duration_moving = 0;
+            state->duration_still += state->last_update_increment;
+        }
+
+        auto adjust = &player->anim_overlay()[animation_layer_adjust];
+
+        if (!state->adjust_started && stopped_moving_this_frame && state->on_ground && !state->on_ladder && !state->landing && state->stutter_step < 50.f) {
+            state->set_layer_sequence(adjust, state->select_sequence_from_activity_modifier(act_csgo_idle_adjust_stoppedmoving), animation_layer_adjust);
+            state->adjust_started = true;
+        }
+
+        int layer_activity = player->get_sequence_activity(adjust->sequence);
+        if (layer_activity == act_csgo_idle_adjust_stoppedmoving || layer_activity == act_csgo_idle_turn_balanceadjust) {
+            if (state->adjust_started && state->speed_as_portion_of_crouch_top_speed <= 0.25f) {
+                state->increment_layer_cycle(adjust, false);
+                state->set_layer_weight(adjust, state->get_layer_ideal_weight_from_seq_cycle(adjust));
+                state->adjust_started = !(state->is_layer_sequence_finished(adjust, state->last_update_increment));
+            }
+            else {
+                state->adjust_started = false;
+                state->set_layer_weight(adjust, math::approach(0, adjust->weight, state->last_update_increment * 5.f));
+            }
+        }
+
+        // Yaw and aim matrix adjustments
+        state->abs_yaw_last = state->abs_yaw;
+        state->abs_yaw = std::clamp<float>(state->abs_yaw, -360, 360);
+        auto eye_delta = math::angle_diff(state->eye_yaw, state->abs_yaw);
+
+        float aim_matrix_width_range = std::lerp(std::clamp(state->speed_as_portion_of_walk_top_speed, 0.f, 1.f), 1.f,
+            std::lerp(state->walk_run_transition, 0.8f, 0.5f));
+
+        if (state->anim_duck_amount > 0) {
+            aim_matrix_width_range = std::lerp(state->anim_duck_amount * std::clamp(state->speed_as_portion_of_crouch_top_speed, 0.f, 1.f),
+                aim_matrix_width_range, 0.5f);
+        }
+
+        auto yaw_max = state->aim_yaw_max * aim_matrix_width_range;
+        auto yaw_min = state->aim_yaw_min * aim_matrix_width_range;
+
+        if (eye_delta > yaw_max) {
+            state->abs_yaw = state->eye_yaw - std::abs(yaw_max);
+        }
+        else if (eye_delta < yaw_min) {
+            state->abs_yaw = state->eye_yaw + std::abs(yaw_min);
+        }
+        state->abs_yaw = math::normalize(state->abs_yaw);
+    }
+
+    void setup_lean(c_animstate* state, float curtime) {
+        auto player = reinterpret_cast<c_csplayer*>(state->player);
+        auto lean = &player->anim_overlay()[animation_layer_lean];
+
+        // Calculate time interval since last velocity check
+        float interval = curtime - state->last_velocity_test_time;
+        if (interval > 0.025f) {
+            interval = min(interval, 0.1f);
+            state->last_velocity_test_time = curtime;
+
+            // Compute target acceleration
+            state->target_acceleration = (player->velocity() - state->velocity_last) / interval;
+            state->target_acceleration.z = 0; // Ignore vertical acceleration
+
+            state->velocity_last = player->velocity();
+        }
+
+        // Smooth acceleration transition
+        state->acceleration = math::approach(state->target_acceleration, state->acceleration, state->last_update_increment * 800.0f);
+
+        // Convert acceleration to lean angle
+       // vector3d temp;
+       // math::vector_to_angles(state->acceleration, vector3d(0, 0, 1), temp);
+
+        // Calculate acceleration weight
+        float acceleration_weight = std::clamp((state->acceleration.length() / CS_PLAYER_SPEED_RUN) * state->speed_as_portion_of_run_top_speed, 0.0f, 1.0f);
+        acceleration_weight *= (1.0f - state->ladder_weight);
+
+        // Set lean pose parameter
+       // state->pose_param_mappings[player_pose_param_lean_yaw].set(player, math::normalize_yaw(state->abs_yaw - temp.y));
+
+        if (lean->sequence <= 0) {
+            auto sequence = player->get_sequence_activity(lean->sequence);
+            if (sequence > 0) {
+                lean->sequence = sequence;
+            }
+        }
+
+        // Apply acceleration weight to the lean layer
+        lean->weight = acceleration_weight;
+        lean->cycle = 0.0f;
+    }
+
+    void run(c_animstate* state, local_anims_t* local_anim, c_animation_layers* layers)
+    {
+        setup_movement(state, local_anim, layers);
+        //    setup_velocity(state, interfaces::global_vars->cur_time);
+        //    setup_lean(state, interfaces::global_vars->cur_time);
+    }
 }

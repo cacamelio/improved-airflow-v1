@@ -52,9 +52,9 @@ c_csplayer* c_anti_aim::get_closest_player(bool skip, bool local_distance)
 	interfaces::engine->get_view_angles(view_angles);
 
 	vector3d local_eye_pos{};
-	//if (g_rage_bot->predicted_eye_pos.valid())
-	//	local_eye_pos = g_rage_bot->predicted_eye_pos;
-	//else
+	if (g_rage_bot->predicted_eye_pos.valid())
+		local_eye_pos = g_rage_bot->predicted_eye_pos;
+	else
 		local_eye_pos = g_ctx.eye_position;
 
 	for (const auto& player_info : player_array)

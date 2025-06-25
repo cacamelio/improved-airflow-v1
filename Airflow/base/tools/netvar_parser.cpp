@@ -133,6 +133,7 @@ namespace netvars
 		offsets::m_bStrafing = g_netvar_manager->get_offset(__fnva1("DT_CSPlayer"), __fnva1("m_bStrafing"));
 		offsets::m_bDucking = g_netvar_manager->get_offset(__fnva1("DT_CSPlayer"), __fnva1("m_bDucking"));
 		offsets::m_bDucked = g_netvar_manager->get_offset(__fnva1("DT_CSPlayer"), __fnva1("m_bDucked"));
+		offsets::m_vecLadderNormal = g_netvar_manager->get_offset(__fnva1("DT_CSPlayer"), __fnva1("m_vecLadderNormal"));
 
 		offsets::m_vecVelocity = g_netvar_manager->get_offset(__fnva1("DT_BasePlayer"), __fnva1("m_vecVelocity[0]"));
 		offsets::m_hActiveWeapon = g_netvar_manager->get_offset(__fnva1("DT_BasePlayer"), __fnva1("m_hActiveWeapon"));

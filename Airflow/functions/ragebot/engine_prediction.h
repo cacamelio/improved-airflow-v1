@@ -63,7 +63,7 @@ public:
 
 class c_engine_prediction
 {
-private:
+public:
 	struct net_data_t
 	{
 		int cmd_number{};
@@ -107,16 +107,23 @@ private:
 
 	struct netvars_t
 	{
-		bool done = false;
+		bool done{ false };
+		bool walking{};
+		bool scoped{};
 
 		int flags{};
 
 		int tickbase{};
+		int move_state{};
+		int move_type{};
 
 		float recoil_index{};
 		float acc_penalty{};
 		float inaccuracy{};
 		float spread{};
+		float lby{};
+		float thirdperson_recoil{};
+		float duck_amount{};
 
 		vector3d origin{};
 		vector3d abs_origin{};
@@ -124,15 +131,30 @@ private:
 		vector3d aimpunch{};
 		vector3d aimpunch_vel{};
 		vector3d viewpunch{};
+		vector3d velocity{};
+		vector3d ladder_normal{};
 
 		uint32_t ground_entity{};
 
 		__forceinline void fill()
 		{
-			recoil_index = g_ctx.weapon->recoil_index();
-			acc_penalty = g_ctx.weapon->accuracy_penalty();
+			walking = g_ctx.local->is_walking();
+			scoped = g_ctx.local->is_scoped();
+
 			flags = g_ctx.local->flags();
 			tickbase = g_ctx.local->tickbase();
+
+			recoil_index = g_ctx.weapon->recoil_index();
+			acc_penalty = g_ctx.weapon->accuracy_penalty();
+			inaccuracy = g_ctx.weapon->get_inaccuracy();
+			spread = g_ctx.weapon->get_spread();
+
+			lby = g_ctx.local->lby();
+			thirdperson_recoil = g_ctx.local->thirdperson_recoil();
+			duck_amount = g_ctx.local->duck_amount();
+
+			move_state = g_ctx.local->move_state();
+			move_type = g_ctx.local->move_type();
 
 			origin = g_ctx.local->origin();
 			abs_origin = g_ctx.local->get_abs_origin();
@@ -140,11 +162,9 @@ private:
 			aimpunch = g_ctx.local->aim_punch_angle();
 			aimpunch_vel = g_ctx.local->aim_punch_angle_vel();
 			viewpunch = g_ctx.local->view_punch_angle();
-
+			velocity = g_ctx.local->velocity();
+			ladder_normal = g_ctx.local->ladder_normal();
 			ground_entity = g_ctx.local->ground_entity();
-
-			inaccuracy = g_ctx.weapon->get_inaccuracy();
-			spread = g_ctx.weapon->get_spread();
 
 			done = true;
 		}
@@ -171,25 +191,57 @@ private:
 			}
 		}
 
+		void set_for_animations()
+		{
+			if (!done)
+				return;
+
+			g_ctx.local->duck_amount() = duck_amount;
+			g_ctx.weapon->recoil_index() = recoil_index;
+			g_ctx.weapon->accuracy_penalty() = acc_penalty;
+
+			g_ctx.local->origin() = origin;
+			g_ctx.local->set_abs_origin(origin);
+			g_ctx.local->view_offset() = viewoffset;
+			g_ctx.local->aim_punch_angle() = aimpunch;
+			g_ctx.local->aim_punch_angle_vel() = aimpunch_vel;
+			g_ctx.local->view_punch_angle() = viewpunch;
+
+			g_ctx.local->is_walking() = walking;
+			g_ctx.local->is_scoped() = scoped;
+
+			g_ctx.local->lby() = lby;
+			g_ctx.local->thirdperson_recoil() = thirdperson_recoil;
+
+			g_ctx.local->move_state() = move_state;
+			g_ctx.local->move_type() = move_type;
+
+			g_ctx.local->ground_entity() = ground_entity;
+			g_ctx.local->flags() = flags;
+
+			g_ctx.local->abs_velocity() = g_ctx.local->velocity() = velocity;
+			g_ctx.local->ladder_normal() = ladder_normal;
+		}
+
 		inline void reset()
 		{
-			this->recoil_index = 0.f;
-			this->acc_penalty = 0.f;
-			this->inaccuracy = 0.f;
-			this->spread = 0.f;
-			this->flags = 0;
-			this->tickbase = 0;
+			recoil_index = 0.f;
+			acc_penalty = 0.f;
+			inaccuracy = 0.f;
+			spread = 0.f;
+			flags = 0;
+			tickbase = 0;
 
-			this->origin.reset();
-			this->abs_origin.reset();
-			this->viewoffset.reset();
-			this->aimpunch.reset();
-			this->aimpunch_vel.reset();
-			this->viewpunch.reset();
+			origin.reset();
+			abs_origin.reset();
+			viewoffset.reset();
+			aimpunch.reset();
+			aimpunch_vel.reset();
+			viewpunch.reset();
 
-			this->ground_entity = 0;
+			ground_entity = 0;
 
-			this->done = false;
+			done = false;
 		}
 	};
 
@@ -224,7 +276,6 @@ private:
 		reset_net_data = false;
 	}
 
-public:
 	vector3d unprediced_velocity{};
 	int unpredicted_flags{};
 	int predicted_buttons{};

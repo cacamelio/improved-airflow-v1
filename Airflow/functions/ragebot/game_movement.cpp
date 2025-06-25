@@ -106,13 +106,6 @@ namespace game_movement
 		velocity.z = 0.f;
 		accelerate(user_cmd, wishdir, wishspeed, velocity, cvars::sv_accelerate->get_float());
 		velocity.z = 0.f;
-
-		const auto speed_sqr = velocity.length_sqr();
-		if (speed_sqr > (max_speed * max_speed))
-			velocity *= max_speed / std::sqrt(speed_sqr);
-
-		if (velocity.length(false) < 1.f)
-			velocity = {};
 	}
 
 	inline void friction(vector3d& velocity)
@@ -159,20 +152,18 @@ namespace game_movement
 
 	inline void modify_move(c_usercmd& user_cmd, vector3d& velocity, float max_speed)
 	{
-		vector3d fwd{}, right{}, up{};
-		math::angle_to_vectors(g_ctx.orig_angle, fwd, right, up);
+		if (velocity.length(true) >= max_speed)
+			return;
 
-		auto cmd_movement = vector3d{ user_cmd.forwardmove, user_cmd.sidemove, user_cmd.upmove };
+		float sidemove = user_cmd.sidemove;
+		float forwardmove = user_cmd.forwardmove;
 
-		const auto speed_sqr = cmd_movement.length_sqr();
-		if (speed_sqr > (max_speed * max_speed))
-			cmd_movement *= max_speed / std::sqrt(speed_sqr);
+		float move_speed = std::sqrtf(std::powf(sidemove, 2) + std::powf(forwardmove, 2));
+		if (move_speed <= 1.f)
+			return;
 
-		full_walk_move(user_cmd, cmd_movement, fwd, right, velocity);
-
-		user_cmd.forwardmove = cmd_movement.x;
-		user_cmd.sidemove = cmd_movement.y;
-		user_cmd.upmove = cmd_movement.z;
+		user_cmd.sidemove = (sidemove / move_speed) * max_speed;
+		user_cmd.forwardmove = (forwardmove / move_speed) * max_speed;
 	}
 
 	inline void force_stop()

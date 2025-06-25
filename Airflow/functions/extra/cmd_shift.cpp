@@ -169,6 +169,10 @@ namespace cmd_shift
 				interfaces::prediction->run_command(g_ctx.local, cmd, interfaces::move_helper);
 				interfaces::move_helper->set_host(nullptr);
 
+				--g_ctx.local->tickbase();
+				g_local_animation_fix->update(); 
+				++g_ctx.local->tickbase();
+
 				g_ctx.cmd = old_cmd;
 			}
 		}

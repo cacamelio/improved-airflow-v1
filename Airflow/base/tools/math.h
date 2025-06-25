@@ -452,6 +452,16 @@ public:
 		return this->x * v.x + this->y * v.y + this->z * v.z;
 	}
 
+	__forceinline float length_sqr() const
+	{
+		return this->x * this->x + this->y * this->y;
+	}
+
+	__forceinline float length() const
+	{
+		return std::sqrtf(length_sqr());
+	}
+
 	__forceinline float length(bool ignore_z) const
 	{
 		if (ignore_z)
