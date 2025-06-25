@@ -163,11 +163,13 @@ float get_point_accuracy(c_csplayer* player, point_t& point)
 	vector3d forward, right, up;
 	math::angle_to_vectors(angle, forward, right, up);
 
+	float spread = g_engine_prediction->predicted_inaccuracy * g_engine_prediction->predicted_spread;
+
 	for (auto i = 1; i <= 6; ++i)
 	{
 		for (auto j = 0; j < 8; ++j)
 		{
-			auto current_spread = g_ctx.spread * ((float)i / 6.f);
+			auto current_spread = spread * ((float)i / 6.f);
 
 			float value = (float)j / 8.0f * (M_PI * 2.f);
 
@@ -395,19 +397,11 @@ int get_record_damage(c_csplayer* player, records_t* record)
 	g_rage_bot->store(player);
 	g_rage_bot->set_record(player, record);
 
-	int broken = 0;
-
-	for (auto& hitbox : backtrack_hitboxes)
+	for (int i = 0; i < 3; ++i)
 	{
-		auto position = player->get_hitbox_position(hitbox, record->sim_orig.bone);
+		auto position = player->get_hitbox_position(backtrack_hitboxes[i], record->sim_orig.bone);
 		auto awall = g_auto_wall->fire_bullet(g_ctx.local, player, g_ctx.weapon_info,
 			g_ctx.weapon->is_taser(), g_ctx.eye_position, position);
-
-		if (awall.dmg < 0)
-		{
-			if (++broken >= backtrack_hitboxes.size() / 2)
-				break;
-		}
 
 		total_dmg += awall.dmg;
 	}
@@ -821,11 +815,6 @@ void thread_get_best_point(aim_cache_t* aim_cache)
 
 	int dmg = g_rage_bot->get_min_damage(aim_cache->player);
 
-	std::sort(aim_cache->points.begin(), aim_cache->points.end(), [&](point_t& a, point_t& b) { return a.accuracy > b.accuracy; });
-	std::sort(aim_cache->points.begin(), aim_cache->points.end(), [&](point_t& a, point_t& b) { return a.center > b.center; });
-	std::sort(aim_cache->points.begin(), aim_cache->points.end(), [&](point_t& a, point_t& b) { return a.damage > b.damage; });
-	
-	static int call_count{};
 	for (auto& i : aim_cache->points)
 	{
 		if (i.predictive)
@@ -833,7 +822,7 @@ void thread_get_best_point(aim_cache_t* aim_cache)
 			if (g_rage_bot->weapon_config.quick_stop_options & early)
 			{
 				force_scope();
-				
+
 				g_rage_bot->pred_stopping = true;
 				g_rage_bot->stopping = true;
 			}
@@ -841,34 +830,30 @@ void thread_get_best_point(aim_cache_t* aim_cache)
 			i.predictive = false;
 		}
 
-		call_count = 0;
-
 		if (i.safety == -1 || i.damage < dmg || g_cfg.binds[force_body_b].toggled && !i.body || g_cfg.binds[force_sp_b].toggled && i.safety != 5)
+		{
+			i.priority = -1;
 			continue;
+		}
 
-		if (weapon_config.prefer_safe && i.safety == 5)
-		{
-			aim_cache->best_point = i;
-			break;
-		}
-		else if (i.body && (i.damage >= health || weapon_config.prefer_body || prefer_baim_on_dt))
-		{
-			aim_cache->best_point = i;
-			break;
-		}
-		else
-		{
-			if (aim_cache->best_point.damage < i.damage)
-				aim_cache->best_point = i;
-		}
+		//int safety = i.safety;
+		int max_accuracy = static_cast<int>(i.accuracy * 1000.f);
+		int max_damage = i.damage;
+		int center = static_cast<int>(i.center) * 1000;
+
+		i.priority = max_accuracy + max_damage + center /*+ safety*/;
+
+		if (i.body && (i.damage >= health || weapon_config.prefer_body || prefer_baim_on_dt))
+			i.priority += 1000;
+		else if (weapon_config.prefer_safe && i.safety == 5)
+			i.priority += 500;
 	}
-}
 
-void c_rage_bot::predict_eye_pos()
-{
-	
+	std::sort(aim_cache->points.begin(), aim_cache->points.end(), [&](point_t& a, point_t& b) { return a.priority > b.priority; });
 
-	//interfaces::debug_overlay->add_text_overlay(predicted_eye_pos, 0.1f, "PRED");
+	auto& best = aim_cache->points[0];
+	if (best.priority != -1)
+		aim_cache->best_point = best;
 }
 
 void c_rage_bot::proceed_aimbot()
