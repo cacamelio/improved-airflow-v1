@@ -6,6 +6,11 @@
 
 #include "../../functions/features.h"
 
+VarMapping_t* c_csplayer::var_mapping()
+{
+	return reinterpret_cast<VarMapping_t*>((DWORD)this + 0x24);
+}
+
 c_baseentity* c_baseentity::get_move_parent()
 {
 	c_baseentity* move_parent = (c_baseentity*)interfaces::entity_list->get_entity_handle(this->move_parent());

@@ -33,10 +33,10 @@ std::string get_bind_type(int type)
 	switch (type)
 	{
 	case 0:
-		return xor_c("[ enabled ]");
+		return xor_c("[ on ]");
 		break;
 	case 1:
-		return xor_c("[ hold ]");
+		return xor_c("[ on hold ]");
 		break;
 	case 2:
 		return xor_c("[ toggled ]");

@@ -274,6 +274,31 @@ public:
 	}
 };
 
+class VarMapEntry_t
+{
+public:
+	unsigned short type;
+	unsigned short m_bNeedsToInterpolate;
+
+	void* data;
+	void* watcher;
+};
+
+
+struct VarMapping_t
+{
+	VarMapping_t()
+	{
+		m_Entries = nullptr;
+		m_nInterpolatedEntries = 0;
+		m_lastInterpolationTime = 0.0f;
+	}
+
+	VarMapEntry_t* m_Entries;
+	int m_nInterpolatedEntries;
+	float m_lastInterpolationTime;
+};
+
 class c_bone_accessor {
 public:
 	alignas(16) matrix3x4_t* bones{};
@@ -1007,6 +1032,7 @@ public:
 	vector3d get_hitbox_position(int hitbox = 0, matrix3x4_t* matrix = nullptr);
 
 	c_csplayer* get_observer_target();
+	VarMapping_t* var_mapping();
 	c_csplayer* get_ragdoll();
 	bool should_fix_modify_eye_pos();
 	c_basecombatweapon* get_active_weapon();

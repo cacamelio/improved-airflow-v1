@@ -3,6 +3,11 @@
 #include "../../base/sdk/c_csplayerresource.h"
 #include "../../base/tools/threads.h"
 
+float land_time = 0.0f;
+auto land_in_cycle = false;
+auto is_landed = false;
+auto on_ground = false;
+
 void c_animation_fix::anim_player_t::adjust_roll_angle(records_t* record)
 {
 	auto& info = resolver_info[ptr->index()];
@@ -21,29 +26,18 @@ void c_animation_fix::anim_player_t::adjust_roll_angle(records_t* record)
 		}
 	}
 
-#if ALPHA || _DEBUG || BETA
-	if (last_record && g_cfg.rage.jitterfix)
-	{
+
+	if (last_record) {
 		if (record->fix_jitter_angle)
 		{
-			switch (g_cfg.rage.jitterfix_method)
-			{
-			case 0:
-				record->eye_angles.y = math::normalize(last_record->eye_angles.y);
-				break;
-			case 1:
-			{
-				if (std::fabsf(record->last_eyeang_diff_time - record->sim_time) < math::ticks_to_time(record->choke))
-					record->eye_angles.y += math::normalize(record->last_eyeang_diff);
-			}
-			break;
-			}
+			record->eye_angles.y = math::normalize(last_record->eye_angles.y);
 
 			record->fix_jitter_angle = false;
+
 		}
 	}
 
-#endif
+
 }
 
 inline simulated_data_t* get_data_by_index(records_t* record, int side)
@@ -61,6 +55,37 @@ inline simulated_data_t* get_data_by_index(records_t* record, int side)
 	}
 }
 
+void c_animation_fix::sim_step_update(c_csplayer* player) //update the fakelag simulation by one tick
+{
+	const auto backup_frametime = interfaces::global_vars->frame_time;
+	const auto backup_curtime = interfaces::global_vars->cur_time;
+	const auto old_flags = player->flags();
+
+	// get player anim state
+	auto state = player->animstate();
+
+	// allow re-animate player in this tick
+	if (state->last_update_frame == interfaces::global_vars->frame_time)
+		state->last_update_frame -= 1.f;
+
+	if (state->last_update_time == interfaces::global_vars->cur_time)
+		state->last_update_time -= 1.f;
+
+	// fixes for networked players
+	interfaces::global_vars->frame_time = interfaces::global_vars->interval_per_tick;
+	interfaces::global_vars->cur_time = player->simulation_time();
+	player->e_flags() &= ~(EFL_DIRTY_ABSVELOCITY | EFL_DIRTY_ABSTRANSFORM);
+
+	// notify the other hooks to instruct animations and pvs fix
+	player->update_clientside_animation();
+
+	player->invalidate_physics_recursive(0x8);
+
+	// restore globals
+	interfaces::global_vars->cur_time = backup_curtime;
+	interfaces::global_vars->frame_time = backup_frametime;
+}
+
 void c_animation_fix::anim_player_t::simulate_animation_side(records_t* record, int side)
 {
 	auto state = ptr->animstate();
@@ -75,7 +100,7 @@ void c_animation_fix::anim_player_t::simulate_animation_side(records_t* record, 
 	if (!last_record || record->dormant)
 	{
 		auto& layers = record->sim_orig.layers;
-		
+
 		auto last_update_time = state->last_update_time;
 
 		// this happens only when first record arrived or when enemy is out from dormant
@@ -258,6 +283,8 @@ void c_animation_fix::anim_player_t::simulate_animation_side(records_t* record, 
 
 	ptr->store_poses(record->poses);
 
+	g_animation_fix->sim_step_update(ptr);
+
 	restore_globals(cur_time);
 	restore_globals(frame_time);
 }
@@ -269,16 +296,31 @@ void c_animation_fix::anim_player_t::build_bones(records_t* record, simulated_da
 
 void c_animation_fix::anim_player_t::update_animations()
 {
-	const auto records_size = teammate ? 3 : g_ctx.tick_rate;
-	while (records.size() > records_size)
+	auto backup_lower_body_yaw_target = this->ptr->lby();
+	auto backup_duck_amount = this->ptr->duck_amount();
+	auto backup_flags = this->ptr->flags();
+	auto backup_eflags = this->ptr->e_flags();
+
+	auto backup_curtime = interfaces::global_vars->cur_time; //-V807
+	auto backup_frametime = interfaces::global_vars->frame_time;
+	auto backup_realtime = interfaces::global_vars->real_time;
+	auto backup_framecount = interfaces::global_vars->frame_count;
+	auto backup_tickcount = interfaces::global_vars->tick_count;
+	auto backup_interpolation_amount = interfaces::global_vars->interpolation_amount;
+
+	interfaces::global_vars->cur_time = this->ptr->simulation_time();
+	interfaces::global_vars->frame_time = interfaces::global_vars->interval_per_tick;
+
+	while (records.size() > 27)
 		records.pop_back();
+	old_record = nullptr;
 
 	if (records.size() > 0)
 	{
 		last_record = &records.front();
 
-		if (records.size() >= 3)
-			old_record = &records[2];
+		if (records.size() >= 2)
+			old_record = &records.at(1);
 	}
 
 	backup_record.update_record(ptr);
@@ -294,9 +336,89 @@ void c_animation_fix::anim_player_t::update_animations()
 	this->fix_land(&record);
 	this->fix_velocity(&record);
 
+	auto e = this;
+
+	if (old_record)
+	{
+		auto ticks_chocked = 1;
+		auto simulation_ticks = math::time_to_ticks(e->ptr->simulation_time() - old_record->old_sim_time);
+
+		if (simulation_ticks > 0 && simulation_ticks < 17)
+			ticks_chocked = simulation_ticks;
+
+		if (ticks_chocked > 1)
+		{
+			if (this->ptr->animstate()->last_update_frame == interfaces::global_vars->frame_count)
+				this->ptr->animstate()->last_update_frame -= 1;
+
+			if (this->ptr->animstate()->last_update_time == interfaces::global_vars->cur_time)
+				this->ptr->animstate()->last_update_time += math::ticks_to_time(1);
+
+
+			if (this->ptr->anim_overlay()[4].cycle < 0.5f && (!(e->ptr->flags() & fl_onground) || !(old_record->ptr->flags() & fl_onground)))
+			{
+				land_time = e->ptr->simulation_time() - this->ptr->anim_overlay()[4].playback_rate * this->ptr->anim_overlay()[4].cycle;
+				land_in_cycle = land_time >= old_record->sim_time;
+			}
+
+			auto duck_amount_per_tick = (e->ptr->duck_amount() - old_record->duck_amount) / ticks_chocked;
+
+			for (auto i = 0; i < ticks_chocked; ++i)
+			{
+				auto simulated_time = old_record->sim_time + math::ticks_to_time(i);
+
+				if (duck_amount_per_tick != 0.f) //-V550
+					e->ptr->duck_amount() = old_record->duck_amount + duck_amount_per_tick * (float)i;
+
+				on_ground = e->ptr->flags() & fl_onground;
+
+				if (land_in_cycle && !is_landed)
+				{
+					if (land_time <= simulated_time)
+					{
+						is_landed = true;
+						on_ground = true;
+					}
+					else
+						on_ground = old_record->flags & fl_onground;
+				}
+
+				if (on_ground)
+					e->ptr->flags() |= fl_onground;
+				else
+					e->ptr->flags() &= ~fl_onground;
+
+				//land fix creds lw4
+				auto v490 = e->ptr->get_sequence_activity(record.ptr->anim_overlay()[5].sequence);
+
+				if (record.ptr->anim_overlay()[5].sequence == old_record->ptr->anim_overlay()[5].sequence && (old_record->ptr->anim_overlay()[5].weight != 0.0f || record.ptr->anim_overlay()[5].weight == 0.0f)
+					|| !(v490 == act_csgo_land_light || v490 == act_csgo_land_heavy)) {
+					if ((record.flags & 1) != 0 && (old_record->flags & fl_onground) == 0)
+						e->ptr->flags() &= ~fl_onground;
+				}
+				else
+					e->ptr->flags() |= fl_onground;
+
+				auto simulated_ticks = math::time_to_ticks(simulated_time);
+
+				interfaces::global_vars->real_time = simulated_time;
+				interfaces::global_vars->cur_time = simulated_time;
+				interfaces::global_vars->frame_count = simulated_ticks;
+				interfaces::global_vars->tick_count = simulated_ticks;
+				interfaces::global_vars->interpolation_amount = 0.0f;
+				interfaces::global_vars->real_time = backup_realtime;
+				interfaces::global_vars->cur_time = backup_curtime;
+				interfaces::global_vars->frame_count = backup_framecount;
+				interfaces::global_vars->tick_count = backup_tickcount;
+				interfaces::global_vars->interpolation_amount = backup_interpolation_amount;
+			}
+		}
+	}
+
 	if (!teammate)
 	{
 		resolver::prepare_side(ptr, &record);
+		//resolver::prepare_side(ptr, &record, old_record);
 
 		c_animstate old_state{};
 		old_state = *ptr->animstate();
@@ -390,6 +512,33 @@ void c_animation_fix::force_data_for_render()
 	}
 }
 
+void c_animation_fix::fix_pvs()
+{
+	for (int i = 1; i <= interfaces::global_vars->max_clients; i++) {
+		auto pCurEntity = static_cast<c_csplayer*>(interfaces::entity_list->get_entity(i));
+
+		if (pCurEntity == g_ctx.local)
+			continue;
+
+		if (!pCurEntity
+			|| !pCurEntity->is_player()
+			|| pCurEntity->index() == interfaces::engine->get_local_player())
+			continue;
+
+		*reinterpret_cast<int*>(reinterpret_cast<uintptr_t>(pCurEntity) + 0xA30) = interfaces::global_vars->frame_count;
+		*reinterpret_cast<int*>(reinterpret_cast<uintptr_t>(pCurEntity) + 0xA28) = 0;
+	}
+}
+
+void c_animation_fix::apply_interpolation_flags(c_csplayer* e)
+{
+	auto map = e->var_mapping();
+	if (map == nullptr)
+		return;
+	for (auto j = 0; j < map->m_nInterpolatedEntries; j++)
+		map->m_Entries[j].m_bNeedsToInterpolate = false;
+}
+
 void c_animation_fix::on_net_update_and_render_after(int stage)
 {
 	if (!g_ctx.in_game || !g_ctx.local || g_ctx.uninject)
@@ -401,18 +550,22 @@ void c_animation_fix::on_net_update_and_render_after(int stage)
 
 	switch (stage)
 	{
+	case frame_net_update_postdataupdate_end:
+		for (auto& player : players)
+		{
+			auto ptr = (c_csplayer*)player.entity;
+			if (!ptr)
+				continue;
+			apply_interpolation_flags(ptr);
+		}
+
+		break;
+
 	case frame_net_update_end:
 	{
 		patterns::cl_fireevents.as<void(*)()>()();
 
-#ifdef _DEBUG
-		g_ctx.local->personal_data_public_level() = 14880;
-#else
-		if (g_ctx.is_boss)
-			g_ctx.local->personal_data_public_level() = 14880;
-		else
-			g_ctx.local->personal_data_public_level() = 25120;
-#endif
+		//	g_ctx.local->personal_data_public_level() = 25120;
 
 		g_rage_bot->on_pre_predict();
 
@@ -533,6 +686,17 @@ void c_animation_fix::on_net_update_and_render_after(int stage)
 		}
 	}
 	break;
+
+	case frame_render_start:
+		for (auto& player : players)
+		{
+			auto ptr = (c_csplayer*)player.entity;
+			if (!ptr)
+				continue;
+			ptr->set_abs_origin(ptr->origin());
+			fix_pvs();
+		}
+		break;
 	}
 }
 
@@ -595,7 +759,7 @@ bool records_t::is_valid(bool deadtime)
 		extra_choke = 14 - interfaces::client_state->choked_commands;
 
 	auto server_tickcount = interfaces::global_vars->tick_count + g_ctx.ping + extra_choke;
-	auto dead_time = (int)(float)((float)((int)((float)((float)server_tickcount 
+	auto dead_time = (int)(float)((float)((int)((float)((float)server_tickcount
 		* interfaces::global_vars->interval_per_tick) - 0.2f) / interfaces::global_vars->interval_per_tick) + 0.5f);
 
 	if (math::time_to_ticks(this->sim_time + g_ctx.lerp_time) < dead_time)

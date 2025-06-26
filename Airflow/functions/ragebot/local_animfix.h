@@ -103,6 +103,7 @@ public:
 		this->backup_vars.reset();
 	}
 
+
 	void update();
 	void force_data_for_render();
 };
