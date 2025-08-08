@@ -418,14 +418,6 @@
     </ClInclude>
     <ClInclude Include="functions\ragebot\game_movement.h" />
     <ClInclude Include="base\tools\memcpy_fast.h" />
-    <ClInclude Include="additionals\threading\atomic_lock.h" />
-    <ClInclude Include="additionals\threading\mutex.h" />
-    <ClInclude Include="additionals\threading\packed_heap.h" />
-    <ClInclude Include="additionals\threading\semaphores.h" />
-    <ClInclude Include="additionals\threading\shared_mutex.h" />
-    <ClInclude Include="additionals\threading\threading.h" />
-    <ClInclude Include="additionals\threading\wincludes.h" />
-    <ClInclude Include="base\ik_solver.hpp" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="additionals\json\jsoncpp.cpp">
@@ -697,11 +689,5 @@
       <Filter>functions\ragebot</Filter>
     </ClCompile>
     <ClCompile Include="functions\ragebot\game_movement.cpp" />
-    <ClCompile Include="additionals\threading\atomic_lock.cpp" />
-    <ClCompile Include="additionals\threading\mutex.cpp" />
-    <ClCompile Include="additionals\threading\packed_heap.cpp" />
-    <ClCompile Include="additionals\threading\semaphores.cpp" />
-    <ClCompile Include="additionals\threading\shared_mutex.cpp" />
-    <ClCompile Include="additionals\threading\threading.cpp" />
   </ItemGroup>
 </Project>

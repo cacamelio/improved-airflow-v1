@@ -122,9 +122,6 @@ namespace func_ptrs
 	using lookup_sequence_fn = int(__thiscall*)(void*, const char*);
 	extern lookup_sequence_fn lookup_sequence;
 
-	using set_abs_velocity_fn = void(__thiscall*)(void*, const vector3d&);
-	extern set_abs_velocity_fn set_abs_velocity;
-
 	extern bool* override_processing;
 	extern int smoke_count;
 

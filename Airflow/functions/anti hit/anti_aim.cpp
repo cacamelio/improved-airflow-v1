@@ -4,8 +4,6 @@
 #include "../config_vars.h"
 
 #include "../features.h"
-//#include "../../additionals/threading/threading.h"
-#include "../../additionals/tinyformat.h"
 
 #include "../../base/tools/render.h"
 #include "../../base/sdk/c_usercmd.h"
@@ -52,9 +50,9 @@ c_csplayer* c_anti_aim::get_closest_player(bool skip, bool local_distance)
 	interfaces::engine->get_view_angles(view_angles);
 
 	vector3d local_eye_pos{};
-	if (g_rage_bot->predicted_eye_pos.valid())
-		local_eye_pos = g_rage_bot->predicted_eye_pos;
-	else
+	//if (g_rage_bot->predicted_eye_pos.valid())
+	//	local_eye_pos = g_rage_bot->predicted_eye_pos;
+	//else
 		local_eye_pos = g_ctx.eye_position;
 
 	for (const auto& player_info : player_array)
@@ -127,140 +125,6 @@ vector3d get_predicted_pos()
 	return last_predicted_velocity;
 }
 
-
-
-
-//bool c_anti_aim::is_peeking()
-//{
-//	auto updated_vars = g_local_animation_fix->get_updated_netvars();
-//
-//	if (!updated_vars || !g_ctx.local || !g_ctx.weapon || !g_ctx.weapon_info || !updated_vars->foot_yaw || !g_ctx.in_game || interfaces::client_state->delta_tick == -1)
-//		return false;
-//
-//	if (!g_utils->is_able_to_shoot() || g_utils->is_firing())
-//		return false;
-//
-//	auto& local_cache = g_ctx.local->bone_cache();
-//	if (!local_cache.base() || !local_cache.count())
-//		return false;
-//
-//	auto player = this->get_closest_player();
-//	if (!player)
-//		return false;
-//
-//	auto predicted_velocity = get_predicted_pos();
-//	auto predicted_eye_pos = g_ctx.eye_position + predicted_velocity;
-//
-//	bool can_peek = false;
-//	auto& esp_info = g_esp_store->playerinfo[player->index()];
-//	if (!predicted_eye_pos.valid() || !esp_info.valid)
-//		return false;
-//
-//	auto origin = player->dormant() ? esp_info.dormant_origin : player->get_abs_origin();
-//
-//	static matrix3x4_t predicted_matrix[128]{};
-//	std::memcpy(predicted_matrix, local_cache.base(), sizeof(predicted_matrix));
-//
-//	if (player->dormant())
-//	{
-//		vector3d poses[3]{ origin, origin + player->view_offset(), origin + vector3d(0.f, 0.f, player->view_offset().z / 2.f) };
-//
-//		for (int i = 0; i < 3; ++i)
-//		{
-//			c_trace_filter filter{};
-//			filter.skip = g_ctx.local;
-//
-//			c_game_trace out{};
-//			interfaces::engine_trace->trace_ray(ray_t(predicted_eye_pos, poses[i]), mask_shot_hull | contents_hitbox, &filter, &out);
-//
-//			if (out.fraction >= 0.97f)
-//			{
-//				can_peek = true;
-//				break;
-//			}
-//		}
-//
-//		if (can_peek)
-//			return true;
-//	}
-//	else
-//	{
-//		auto weapon = player->get_active_weapon();
-//		if (!weapon)
-//			return false;
-//
-//		auto weapon_info = weapon->get_weapon_info();
-//		if (!weapon_info)
-//			return false;
-//
-//		// detect if you can get dmg by enemy
-//		auto predicted_origin = g_ctx.local->origin() + predicted_velocity;
-//		math::change_matrix_position(predicted_matrix, 128, g_ctx.local->origin(), predicted_origin);
-//		{
-//			auto head_pos = g_ctx.local->get_hitbox_position(0, predicted_matrix);
-//
-//			auto old_abs_origin = g_ctx.local->get_abs_origin();
-//			static matrix3x4_t old_cache[128]{};
-//			g_ctx.local->store_bone_cache(old_cache);
-//			{
-//				g_ctx.local->set_abs_origin(predicted_origin);
-//				g_ctx.local->set_bone_cache(predicted_matrix);
-//
-//				for (auto& i : hitbox_list)
-//				{
-//					auto hitbox_position = g_ctx.local->get_hitbox_position(i);
-//
-//					auto awall = g_auto_wall->fire_bullet(player, g_ctx.local, weapon_info, false, player->get_eye_position(), hitbox_position);
-//				//	interfaces::debug_overlay->add_text_overlay(hitbox_position, interfaces::global_vars->interval_per_tick * 2.f, "%d", awall.dmg);
-//
-//					if (awall.dmg >= 1)
-//					{
-//						can_peek = true;
-//						break;
-//					}
-//				}
-//			}
-//			g_ctx.local->set_abs_origin(old_abs_origin);
-//			g_ctx.local->set_bone_cache(old_cache);
-//		}
-//		math::change_matrix_position(predicted_matrix, 128, predicted_origin, g_ctx.local->origin());
-//
-//		// detect if you can peek enemy backtracked pos
-//		auto old_record = g_animation_fix->get_oldest_record(player);
-//		auto last_record = g_animation_fix->get_latest_record(player);
-//
-//		records_t* record = nullptr;
-//		if (last_record)
-//			record = last_record;
-//		else if (old_record)
-//			record = old_record;
-//
-//		for (const auto& i : hitbox_list)
-//		{
-//			auto hitbox_pos = player->get_hitbox_position(i, record ? record->sim_orig.bone : nullptr);
-//
-//			if (record)
-//			{
-//				g_rage_bot->store(player);
-//				g_rage_bot->set_record(player, record);
-//			}
-//
-//			bool can_hit_point = g_auto_wall->can_hit_point(player, g_ctx.local, hitbox_pos, predicted_eye_pos, 0);
-//
-//			if (record)
-//				g_rage_bot->restore(player);
-//
-//			if (can_hit_point)
-//			{
-//				can_peek = true;
-//				break;
-//			}
-//		}
-//	}
-//
-//	return can_peek;
-//}
-
 bool c_anti_aim::is_peeking()
 {
 	auto updated_vars = g_local_animation_fix->get_updated_netvars();
@@ -275,7 +139,7 @@ bool c_anti_aim::is_peeking()
 	if (!local_cache.base() || !local_cache.count())
 		return false;
 
-	auto player = get_closest_player();
+	auto player = this->get_closest_player();
 	if (!player)
 		return false;
 
@@ -324,62 +188,43 @@ bool c_anti_aim::is_peeking()
 		if (!weapon_info)
 			return false;
 
-		vector3d pos = g_ctx.local->origin() + predicted_velocity;
-		vector3d poses[3]{ pos, pos + player->view_offset(), pos + vector3d(0.f, 0.f, player->view_offset().z / 2.f) };
-
-		for (int i = 0; i < 3; ++i)
-		{
-			auto awall = g_auto_wall->fire_bullet(player, nullptr, weapon_info, false, player->get_eye_position(), poses[i], true);
-
-			//interfaces::debug_overlay->add_line_overlay(player->get_eye_position(), poses[i], 255, 255, 255, false, interfaces::global_vars->interval_per_tick * 2.f);
-
-
-			if (awall.dmg >= 1)
-			{
-				can_peek = true;
-				break;
-			}
-		}
-
 		// detect if you can get dmg by enemy
-		//auto predicted_origin = g_ctx.local->origin() + predicted_velocity;
-		//math::change_matrix_position(predicted_matrix, 128, g_ctx.local->origin(), predicted_origin);
-		//{
-		//	auto head_pos = g_ctx.local->get_hitbox_position(0, predicted_matrix);
+		auto predicted_origin = g_ctx.local->origin() + predicted_velocity;
+		math::change_matrix_position(predicted_matrix, 128, g_ctx.local->origin(), predicted_origin);
+		{
+			auto head_pos = g_ctx.local->get_hitbox_position(0, predicted_matrix);
 
-		//	auto old_abs_origin = g_ctx.local->get_abs_origin();
-		//	static matrix3x4_t old_cache[128]{};
-		//	g_ctx.local->store_bone_cache(old_cache);
-		//	{
-		//		g_ctx.local->set_abs_origin(predicted_origin);
-		//		g_ctx.local->set_bone_cache(predicted_matrix);
+			auto old_abs_origin = g_ctx.local->get_abs_origin();
+			static matrix3x4_t old_cache[128]{};
+			g_ctx.local->store_bone_cache(old_cache);
+			{
+				g_ctx.local->set_abs_origin(predicted_origin);
+				g_ctx.local->set_bone_cache(predicted_matrix);
 
-		//		for (auto& i : hitbox_list)
-		//		{
-		//			auto hitbox_position = g_ctx.local->get_hitbox_position(i);
+				for (auto& i : hitbox_list)
+				{
+					auto hitbox_position = g_ctx.local->get_hitbox_position(i);
 
-		//			auto awall = g_auto_wall.fire_bullet(player, g_ctx.local, weapon_info, false, player->get_eye_position(), hitbox_position);
-		//			interfaces::debug_overlay->add_text_overlay(hitbox_position, interfaces::global_vars->interval_per_tick * 2.f, "%d", awall.dmg);
+					auto awall = g_auto_wall->fire_bullet(player, g_ctx.local, weapon_info, false, player->get_eye_position(), hitbox_position);
+				//	interfaces::debug_overlay->add_text_overlay(hitbox_position, interfaces::global_vars->interval_per_tick * 2.f, "%d", awall.dmg);
 
-		//			if (awall.dmg >= 1)
-		//			{
-		//				can_peek = true;
-		//				break;
-		//			}
-		//		}
-		//	}
-		//	g_ctx.local->set_abs_origin(old_abs_origin);
-		//	g_ctx.local->set_bone_cache(old_cache);
-		//}
-		//math::change_matrix_position(predicted_matrix, 128, predicted_origin, g_ctx.local->origin());
+					if (awall.dmg >= 1)
+					{
+						can_peek = true;
+						break;
+					}
+				}
+			}
+			g_ctx.local->set_abs_origin(old_abs_origin);
+			g_ctx.local->set_bone_cache(old_cache);
+		}
+		math::change_matrix_position(predicted_matrix, 128, predicted_origin, g_ctx.local->origin());
 
-		//// detect if you can peek enemy backtracked pos
-		//auto old_record = g_animation_fix.get_oldest_record(player);
-		//auto last_record = g_animation_fix.get_latest_record(player);
+		// detect if you can peek enemy backtracked pos
+		auto old_record = g_animation_fix->get_oldest_record(player);
+		auto last_record = g_animation_fix->get_latest_record(player);
 
-
-
-		/*records_t* record = nullptr;
+		records_t* record = nullptr;
 		if (last_record)
 			record = last_record;
 		else if (old_record)
@@ -391,21 +236,21 @@ bool c_anti_aim::is_peeking()
 
 			if (record)
 			{
-				g_rage_bot.store(player);
-				g_rage_bot.set_record(player, record);
+				g_rage_bot->store(player);
+				g_rage_bot->set_record(player, record);
 			}
 
-			bool can_hit_point = g_auto_wall.can_hit_point(player, g_ctx.local, hitbox_pos, predicted_eye_pos, 0);
+			bool can_hit_point = g_auto_wall->can_hit_point(player, g_ctx.local, hitbox_pos, predicted_eye_pos, 0);
 
 			if (record)
-				g_rage_bot.restore(player);
+				g_rage_bot->restore(player);
 
 			if (can_hit_point)
 			{
 				can_peek = true;
 				break;
 			}
-		}*/
+		}
 	}
 
 	return can_peek;

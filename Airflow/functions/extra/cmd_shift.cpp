@@ -170,7 +170,7 @@ namespace cmd_shift
 				interfaces::move_helper->set_host(nullptr);
 
 				--g_ctx.local->tickbase();
-				g_local_animation_fix->update(); 
+				g_local_animation_fix->update();
 				++g_ctx.local->tickbase();
 
 				g_ctx.cmd = old_cmd;

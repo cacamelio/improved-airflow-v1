@@ -8,21 +8,18 @@ class c_csplayer;
 
 enum animstate_pose_param_idx_t
 {
-	player_pose_param_strafe_yaw,
-	player_pose_param_stand,
-	player_pose_param_lean_yaw,
+	player_pose_param_first = 0,
+	player_pose_param_lean_yaw = player_pose_param_first,
 	player_pose_param_speed,
-	player_pose_param_ladder_yaw,
 	player_pose_param_ladder_speed,
-	player_pose_param_jump_fall,
+	player_pose_param_ladder_yaw,
 	player_pose_param_move_yaw,
-	player_pose_param_move_blend_crouch,
 	player_pose_param_run,
 	player_pose_param_body_yaw,
 	player_pose_param_body_pitch,
 	player_pose_param_death_yaw,
-
-
+	player_pose_param_stand,
+	player_pose_param_jump_fall,
 	player_pose_param_aim_blend_stand_idle,
 	player_pose_param_aim_blend_crouch_idle,
 	player_pose_param_strafe_dir,
@@ -31,33 +28,9 @@ enum animstate_pose_param_idx_t
 	player_pose_param_aim_blend_crouch_walk,
 	player_pose_param_move_blend_walk,
 	player_pose_param_move_blend_run,
-
+	player_pose_param_move_blend_crouch_walk,
 	player_pose_param_count,
 };
-
-
-enum pose_param_t {
-	strafe_yaw,
-	stand,
-	lean_yaw,
-	speed,
-	ladder_yaw,
-	LADDER_SPEED,
-	JUMP_FALL,
-	MOVE_YAW,
-	MOVE_BLEND_CROUCH,
-	MOVE_BLEND_WALK,
-	MOVE_BLEND_RUN,
-	BODY_YAW,
-	BODY_PITCH,
-	AIM_BLEND_STAND_IDLE,
-	AIM_BLEND_STAND_WALK,
-	AIM_BLEND_STAND_RUN,
-	AIM_BLEND_COURCH_IDLE,
-	AIM_BLEND_CROUCH_WALK,
-	DEATH_YAW
-};
-
 
 struct animstate_pose_param_cache_t
 {
@@ -256,8 +229,6 @@ public:
 	void update(const vector3d& angle);
 	void reset();
 
-	float_t get_yaw_modifer();
-
 	float get_min_rotation();
 	float get_max_rotation();
 
@@ -267,7 +238,7 @@ public:
 	void set_layer_rate(c_animation_layers* layer, float rate);
 	void set_layer_weight(c_animation_layers* layer, float weight);
 	void set_layer_weight_rate(c_animation_layers* layer, float prev);
-	void set_layer_sequence(c_animation_layers* layer, int sequence, int index);
+	void set_layer_sequence(c_animation_layers* layer, int sequence);
 	int select_sequence_from_activity_modifier(int iActivity);
 	float get_layer_ideal_weight_from_seq_cycle(c_animation_layers* layer);
 	void update_layer(c_animation_layers* layer, int sequence, float rate, float cycle, float weight, int index);

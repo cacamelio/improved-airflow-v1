@@ -204,27 +204,24 @@ int c_rage_bot::get_safety_count(c_csplayer* player, point_t& point)
 	if (!rage_tools::can_hit_hitbox(g_ctx.eye_position, point.position, player, point.hitbox, point.record, point.record->sim_orig.bone))
 		return -1;
 
-	auto safety = 0;
-	matrix3x4_t* matrices[]
-	{
-		point.record->sim_left.roll_bone,
-		point.record->sim_left.bone,
+	int safety{ 0 };
+	if (rage_tools::can_hit_hitbox(g_ctx.eye_position, point.position, player, point.hitbox, point.record, point.record->sim_zero.bone))
+		++safety;
 
-		point.record->sim_right.roll_bone,
-		point.record->sim_right.bone,
+	if (rage_tools::can_hit_hitbox(g_ctx.eye_position, point.position, player, point.hitbox, point.record, point.record->sim_left.bone))
+		++safety;
 
-		point.record->sim_zero.bone,
-	};
+	if (rage_tools::can_hit_hitbox(g_ctx.eye_position, point.position, player, point.hitbox, point.record, point.record->sim_right.bone))
+		++safety;
 
-	for (int i = 0; i < 5; ++i)
-	{
-		if (rage_tools::can_hit_hitbox(g_ctx.eye_position, point.position, player, point.hitbox, point.record, matrices[i]))
-			++safety;
-	}
+	if (rage_tools::can_hit_hitbox(g_ctx.eye_position, point.position, player, point.hitbox, point.record, point.record->sim_left.roll_bone))
+		++safety;
+
+	if (rage_tools::can_hit_hitbox(g_ctx.eye_position, point.position, player, point.hitbox, point.record, point.record->sim_right.roll_bone))
+		++safety;
 
 	return safety;
 }
-
 int c_rage_bot::get_min_damage(c_csplayer* player)
 {
 	int health = player->health();
@@ -397,11 +394,19 @@ int get_record_damage(c_csplayer* player, records_t* record)
 	g_rage_bot->store(player);
 	g_rage_bot->set_record(player, record);
 
-	for (int i = 0; i < 3; ++i)
+	int broken = 0;
+
+	for (auto& hitbox : backtrack_hitboxes)
 	{
-		auto position = player->get_hitbox_position(backtrack_hitboxes[i], record->sim_orig.bone);
+		auto position = player->get_hitbox_position(hitbox, record->sim_orig.bone);
 		auto awall = g_auto_wall->fire_bullet(g_ctx.local, player, g_ctx.weapon_info,
 			g_ctx.weapon->is_taser(), g_ctx.eye_position, position);
+
+		if (awall.dmg < 0)
+		{
+			if (++broken >= backtrack_hitboxes.size() / 2)
+				break;
+		}
 
 		total_dmg += awall.dmg;
 	}
@@ -815,6 +820,11 @@ void thread_get_best_point(aim_cache_t* aim_cache)
 
 	int dmg = g_rage_bot->get_min_damage(aim_cache->player);
 
+	std::sort(aim_cache->points.begin(), aim_cache->points.end(), [&](point_t& a, point_t& b) { return a.accuracy > b.accuracy; });
+	std::sort(aim_cache->points.begin(), aim_cache->points.end(), [&](point_t& a, point_t& b) { return a.center > b.center; });
+	std::sort(aim_cache->points.begin(), aim_cache->points.end(), [&](point_t& a, point_t& b) { return a.damage > b.damage; });
+	
+	static int call_count{};
 	for (auto& i : aim_cache->points)
 	{
 		if (i.predictive)
@@ -822,7 +832,7 @@ void thread_get_best_point(aim_cache_t* aim_cache)
 			if (g_rage_bot->weapon_config.quick_stop_options & early)
 			{
 				force_scope();
-
+				
 				g_rage_bot->pred_stopping = true;
 				g_rage_bot->stopping = true;
 			}
@@ -830,30 +840,34 @@ void thread_get_best_point(aim_cache_t* aim_cache)
 			i.predictive = false;
 		}
 
+		call_count = 0;
+
 		if (i.safety == -1 || i.damage < dmg || g_cfg.binds[force_body_b].toggled && !i.body || g_cfg.binds[force_sp_b].toggled && i.safety != 5)
-		{
-			i.priority = -1;
 			continue;
+
+		if (weapon_config.prefer_safe && i.safety == 5)
+		{
+			aim_cache->best_point = i;
+			break;
 		}
-
-		//int safety = i.safety;
-		int max_accuracy = static_cast<int>(i.accuracy * 1000.f);
-		int max_damage = i.damage;
-		int center = static_cast<int>(i.center) * 1000;
-
-		i.priority = max_accuracy + max_damage + center /*+ safety*/;
-
-		if (i.body && (i.damage >= health || weapon_config.prefer_body || prefer_baim_on_dt))
-			i.priority += 1000;
-		else if (weapon_config.prefer_safe && i.safety == 5)
-			i.priority += 500;
+		else if (i.body && (i.damage >= health || weapon_config.prefer_body || prefer_baim_on_dt))
+		{
+			aim_cache->best_point = i;
+			break;
+		}
+		else
+		{
+			if (aim_cache->best_point.damage < i.damage)
+				aim_cache->best_point = i;
+		}
 	}
+}
 
-	std::sort(aim_cache->points.begin(), aim_cache->points.end(), [&](point_t& a, point_t& b) { return a.priority > b.priority; });
+void c_rage_bot::predict_eye_pos()
+{
+	
 
-	auto& best = aim_cache->points[0];
-	if (best.priority != -1)
-		aim_cache->best_point = best;
+	//interfaces::debug_overlay->add_text_overlay(predicted_eye_pos, 0.1f, "PRED");
 }
 
 void c_rage_bot::proceed_aimbot()

@@ -5,10 +5,42 @@
 
 #include "../../base/sdk/entity.h"
 
-#include "../../functions/features.h"
+class c_trace_filter_simple
+{
+public:
+	__forceinline c_trace_filter_simple() : vtable{ *patterns::trace_filter.add(0x3D).as< uintptr_t* >() }
+	{
+	}
 
-constexpr int shot_hull = 0x600400bu;
-constexpr int shot_player = 0x4600400bu;
+	__forceinline c_trace_filter_simple(c_baseentity* const ignore_entity, const int collision_group)
+		: vtable{ *patterns::trace_filter.add(0x3D).as< uintptr_t* >() }, ignore_entity{ ignore_entity }, collision_group{ collision_group }
+	{
+	}
+
+	uintptr_t vtable{};
+	c_baseentity* ignore_entity{};
+	int collision_group{};
+	should_hit_fn_t should_hit_fn{};
+};
+
+class c_trace_filter_skip_two_entities
+{
+public:
+	__forceinline c_trace_filter_skip_two_entities() : vtable{ *patterns::trace_filter_skip_entities.add(0x3).as< uintptr_t* >() }
+	{
+	}
+
+	__forceinline c_trace_filter_skip_two_entities(c_baseentity* const ignore_entity0, c_baseentity* const ignore_entity1, const int collision_group = 0)
+		: vtable{ *patterns::trace_filter_skip_entities.add(0x3).as< uintptr_t* >() }, ignore_entity0{ ignore_entity0 }, collision_group{ collision_group }, ignore_entity1{ ignore_entity1 }
+	{
+	}
+
+	uintptr_t vtable{};
+	c_baseentity* ignore_entity0{};
+	int collision_group{};
+	should_hit_fn_t should_hit_fn{};
+	c_baseentity* ignore_entity1{};
+};
 
 bool c_auto_wall::is_breakable_entity(c_baseentity* entity)
 {
@@ -36,7 +68,18 @@ bool c_auto_wall::is_breakable_entity(c_baseentity* entity)
 			return true;
 	}
 
-	return func_ptrs::is_breakable_entity(entity);
+	auto take_damage = *patterns::is_breakable_entity.add(xor_int(0x26)).as<uintptr_t*>();
+	auto backup = *(uint8_t*)((uintptr_t)entity + take_damage);
+
+	if (HASH_RT(client_class->network_name) == HASH("CBreakableSurface"))
+		*(uint8_t*)((uintptr_t)entity + take_damage) = 2;
+	else if (HASH_RT(client_class->network_name) == HASH("CBaseDoor") || HASH_RT(client_class->network_name) == HASH("CDynamicProp"))
+		*(uint8_t*)((uintptr_t)entity + take_damage) = 0;
+
+	auto result = func_ptrs::is_breakable_entity(entity);
+	*(uint8_t*)((uintptr_t)entity + take_damage) = backup;
+
+	return result;
 }
 
 bool c_auto_wall::can_hit_point(c_csplayer* entity, c_csplayer* starter, const vector3d& point, const vector3d& source, int min_damage)
@@ -44,7 +87,9 @@ bool c_auto_wall::can_hit_point(c_csplayer* entity, c_csplayer* starter, const v
 	const auto origin_backup = starter->get_abs_origin();
 
 	starter->set_abs_origin(vector3d(source.x, source.y, origin_backup.z));
-	const auto& data = fire_bullet(starter, entity, g_ctx.weapon_info, g_ctx.weapon->is_taser(), source, point);
+
+	const auto& data = this->fire_bullet(starter, entity, g_ctx.weapon_info, g_ctx.weapon->is_taser(), source, point);
+
 	starter->set_abs_origin(origin_backup);
 
 	return data.dmg >= min_damage + 1;
@@ -52,17 +97,36 @@ bool c_auto_wall::can_hit_point(c_csplayer* entity, c_csplayer* starter, const v
 
 bool c_auto_wall::trace_to_exit(const vector3d& src, const vector3d& dir, const c_game_trace& enter_trace, c_game_trace& exit_trace, c_csplayer* shooter)
 {
-	constexpr float MAX_DISTANCE = 90.f, STEP_SIZE = 4.f;
+	float MAX_DISTANCE = 90.f, STEP_SIZE = 4.f;
 	float current_distance = 0.f;
 
 	int first_contents = 0;
+
+	/*const auto enter_surface_data = interfaces::phys_surface_props->get_surface_data(enter_trace.surface.surface_props);
+
+	int enterMaterial = enter_surface_data->game.material;*/
+
+	/*switch (enterMaterial) {
+	case 2:
+		current_distance = 50.f;
+		STEP_SIZE = 6.f;
+		break;
+	case 3:
+	case 67:
+		current_distance = 40.f;
+		STEP_SIZE = 6.f;
+		break;
+	case 77:
+		current_distance = 30.f;
+		break;
+	}*/
 
 	do
 	{
 		current_distance += STEP_SIZE;
 		auto new_end = src + (dir * current_distance);
 
-		int point_contents = interfaces::engine_trace->get_point_contents(new_end, shot_player);
+		int point_contents = interfaces::engine_trace->get_point_contents(new_end, 0x4600400bu);
 
 		if (!first_contents)
 			first_contents = point_contents;
@@ -71,13 +135,13 @@ bool c_auto_wall::trace_to_exit(const vector3d& src, const vector3d& dir, const 
 		{
 			auto new_start = new_end - (dir * STEP_SIZE);
 
-			interfaces::engine_trace->trace_ray(ray_t(new_end, new_start), shot_player, nullptr, &exit_trace);
-			if (exit_trace.start_solid && (exit_trace.surface.flags & surf_hitbox))
-			{
-				c_trace_filter filter{};
-				filter.skip = shooter;
+			interfaces::engine_trace->trace_ray(ray_t(new_end, new_start), 0x4600400bu, nullptr, &exit_trace);
 
-				interfaces::engine_trace->trace_ray(ray_t(src, new_start), shot_player, &filter, &exit_trace);
+			if (exit_trace.start_solid && exit_trace.surface.flags & surf_hitbox)
+			{
+				c_trace_filter_skip_two_entities filter(shooter, exit_trace.entity);
+
+				interfaces::engine_trace->trace_ray(ray_t(src, new_start), 0x4600400bu, (i_trace_filter*)&filter, &exit_trace);
 
 				if (exit_trace.did_hit() && !exit_trace.start_solid)
 				{
@@ -95,7 +159,7 @@ bool c_auto_wall::trace_to_exit(const vector3d& src, const vector3d& dir, const 
 					{
 						if (enter_trace.did_hit_non_world_entity())
 						{
-							if (is_breakable_entity(enter_trace.entity))
+							if (this->is_breakable_entity(enter_trace.entity))
 							{
 								exit_trace = enter_trace;
 								exit_trace.end = src + dir;
@@ -106,12 +170,14 @@ bool c_auto_wall::trace_to_exit(const vector3d& src, const vector3d& dir, const 
 				}
 				else
 				{
-					if (is_breakable_entity(enter_trace.entity) && is_breakable_entity(exit_trace.entity))
+					if (this->is_breakable_entity(enter_trace.entity) && this->is_breakable_entity(exit_trace.entity))
 						return true;
 
 					if (enter_trace.surface.flags & surf_nodraw || (!(exit_trace.surface.flags & surf_nodraw) && exit_trace.plane.normal.dot(dir) <= 1.f))
 					{
 						const float mult_amount = exit_trace.fraction * 4.f;
+
+						// get the real end pos
 						new_start -= dir * mult_amount;
 						return true;
 					}
@@ -125,87 +191,30 @@ bool c_auto_wall::trace_to_exit(const vector3d& src, const vector3d& dir, const 
 	return false;
 }
 
-void c_auto_wall::clip_trace_to_players(const vector3d& start, const vector3d& end, unsigned int mask, i_trace_filter* filter, c_game_trace* tr, should_hit_fn_t should_hit)
-{
-	float smallest_fraction = tr->fraction;
-
-	const auto& players = g_listener_entity->get_entity(ent_player);
-	for (auto& i : players)
-	{
-		auto player = reinterpret_cast<c_csplayer*>(i.entity);
-
-		if (!player || player == g_ctx.local)
-			continue;
-
-		if (player->dormant() || !player->is_alive())
-			continue;
-
-		auto collideable = player->get_collideable();
-		if (!collideable)
-			continue;
-
-		auto obb_center = (collideable->get_mins() + collideable->get_maxs()) / 2.f;
-		auto position = obb_center + player->origin();
-
-		vector3d to = position - start;
-		vector3d direction = end - start;
-		float length = direction.normalized_float();
-
-		float range_along = direction.dot(to);
-		float range{ 0.f };
-		if (range_along < 0.0f)
-			range = -to.length(false);
-		else if (range_along > length)
-			range = -(position - end).length(false);
-
-		else
-		{
-			auto on_ray = start + direction * range_along;
-			range = (position - on_ray).length(false);
-		}
-
-		if (range < 0.f || range > 60.f)
-			return;
-
-		c_game_trace trace;
-		interfaces::engine_trace->clip_ray_to_entity(ray_t(start, end), mask, player, &trace);
-
-		if (trace.fraction < smallest_fraction)
-		{
-			*tr = trace;
-			smallest_fraction = trace.fraction;
-		}
-	}
-}
-
 void c_auto_wall::clip_trace_to_player(const vector3d& src, const vector3d& dst, c_game_trace& trace, c_csplayer* const player, const should_hit_fn_t& should_hit_fn)
 {
+	if (should_hit_fn && !should_hit_fn(player, 0x4600400bu))
+		return;
+
 	const auto pos = player->origin() + (player->bb_mins() + player->bb_maxs()) * 0.5f;
-	vector3d to = pos - src;
-	vector3d direction = dst - src;
-	float length = direction.normalized_float();
+	const auto to = pos - src;
 
-	float range_along = direction.dot(to);
-	float range{ 0.f };
-	if (range_along < 0.0f)
-		range = -to.length(false);
-	else if (range_along > length)
-		range = -(pos - dst).length(false);
+	auto dir = src - dst;
+	const auto len = dir.normalized_float();
+	const auto range_along = dir.dot(to);
 
-	else
-	{
-		auto on_ray = src + direction * range_along;
-		range = (pos - on_ray).length(false);
-	}
+	const auto range = range_along < 0.f ? -(to).length(false) : range_along > len ? -(pos - dst).length(false) : (pos - (src + dir * range_along)).length(false);
 
-	if (range < 0.f || range > 60.f)
+	if (range > 60.f)
 		return;
 
 	c_game_trace new_trace{};
-	interfaces::engine_trace->clip_ray_to_entity({ src, dst }, shot_player, player, &new_trace);
+	interfaces::engine_trace->clip_ray_to_entity({ src, dst }, 0x4600400bu, player, &new_trace);
 
-	if (trace.fraction > new_trace.fraction)
-		trace = new_trace;
+	if (new_trace.fraction > trace.fraction)
+		return;
+
+	trace = new_trace;
 }
 
 bool c_auto_wall::handle_bullet_penetration(
@@ -231,7 +240,7 @@ bool c_auto_wall::handle_bullet_penetration(
 		return false;
 
 	c_game_trace exit_trace = { };
-	if (!trace_to_exit(enter_trace.end, dir, enter_trace, exit_trace, shooter))
+	if (!this->trace_to_exit(enter_trace.end, dir, enter_trace, exit_trace, shooter))
 	{
 		if ((interfaces::engine_trace->get_point_contents(enter_trace.end, mask_shot_hull) & mask_shot_hull) == 0)
 			return false;
@@ -247,8 +256,11 @@ bool c_auto_wall::handle_bullet_penetration(
 
 	const int exit_material = exit_surface_data->game.material;
 
-	float damage_modifier = 0.16f;
+	float damage_modifier = 0.f;
 	float penetration_modifier = 0.f;
+
+	damage_modifier = 0.16f;
+	penetration_modifier = (enter_penetration_modifier + exit_penetration_modifier) * 0.5f;
 
 	if (enter_material == char_tex_grate || enter_material == char_tex_glass)
 	{
@@ -284,27 +296,26 @@ bool c_auto_wall::handle_bullet_penetration(
 			penetration_modifier = 2.f;
 	}
 
-	float trace_dist = (exit_trace.end - enter_trace.end).length_sqr();
-	float pen_mod = std::max(0.f, 1.f / penetration_modifier);
+	float trace_distance = (exit_trace.end - enter_trace.end).length(false);
+	float penetration_mod = std::max(0.0f, 1.0f / penetration_modifier);
 
-	float dmg_chunk = cur_dmg * damage_modifier;
-	float pen_weapon_mod = dmg_chunk + std::max(0.f, (3.f / penetration_modifier) * 1.25f) * (pen_mod * 3.f);
+	trace_distance = trace_distance * trace_distance * penetration_mod * 0.041666668f;
 
-	float lost_dmg_object = ((pen_mod * (trace_dist)) / 24);
-	float lost_damage = pen_weapon_mod + lost_dmg_object;
+	auto lost_damage = std::max(0.0f, 3.0f / wpn_data->penetration * 1.25f)
+		* penetration_mod * 3.0f + cur_dmg * damage_modifier + trace_distance;
 
-	if (lost_damage > cur_dmg)
+	const float clamped_lost_damage = fmaxf(lost_damage, 0.f);
+	if (clamped_lost_damage > cur_dmg)
 		return false;
 
-	if (lost_damage > 0.f)
-		cur_dmg -= lost_damage;
+	if (clamped_lost_damage > 0.0f)
+		cur_dmg -= clamped_lost_damage;
 
 	if (cur_dmg < 1.0f)
 		return false;
 
 	src = exit_trace.end;
 	--pen_count;
-
 	return true;
 }
 
@@ -365,7 +376,6 @@ void c_auto_wall::scale_dmg(c_csplayer* const player, float& dmg, const float we
 	case hitgroup_leftarm:
 	case hitgroup_rightarm:
 	case hitgroup_neck:
-	case hitgroup_gear:
 		dmg *= body_damage_scale;
 		break;
 	case hitgroup_stomach:
@@ -392,9 +402,7 @@ void c_auto_wall::scale_dmg(c_csplayer* const player, float& dmg, const float we
 		}
 
 		float damage_to_health = dmg * armor_ratio;
-		const float damage_to_armor = (dmg - damage_to_health) * (heavy_armor_bonus * armor_bonus);
-
-		if (damage_to_armor > static_cast<float>(armor))
+		if (const float damage_to_armor = (dmg - damage_to_health) * (heavy_armor_bonus * armor_bonus); damage_to_armor > static_cast<float>(armor))
 			damage_to_health = dmg - static_cast<float>(armor) / armor_bonus;
 
 		dmg = damage_to_health;
@@ -415,8 +423,8 @@ pen_data_t c_auto_wall::fire_bullet(c_csplayer* const shooter, c_csplayer* const
 	dir = dir.normalized();
 
 	c_game_trace trace{};
-	c_trace_filter trace_filter{};
-	trace_filter.skip = shooter;
+	c_trace_filter_simple trace_filter{};
+	trace_filter.ignore_entity = shooter;
 
 	auto max_dist = wpn_data->range;
 
@@ -426,12 +434,10 @@ pen_data_t c_auto_wall::fire_bullet(c_csplayer* const shooter, c_csplayer* const
 
 		const auto cur_dst = src + dir * max_dist;
 
-		interfaces::engine_trace->trace_ray(ray_t(src, cur_dst), shot_player, &trace_filter, &trace);
+		interfaces::engine_trace->trace_ray(ray_t(src, cur_dst), 0x4600400bu, (i_trace_filter*)(&trace_filter), &trace);
 
 		if (target)
-			clip_trace_to_player(src, cur_dst + dir * 40.f, trace, target, nullptr);
-		else
-			clip_trace_to_players(src, cur_dst + dir * 40.f, shot_player, &trace_filter, &trace, nullptr);
+			this->clip_trace_to_player(src, cur_dst + dir * 40.f, trace, target, trace_filter.should_hit_fn);
 
 		if (trace.fraction == 1.f)
 			break;
@@ -461,7 +467,7 @@ pen_data_t c_auto_wall::fire_bullet(c_csplayer* const shooter, c_csplayer* const
 					if (is_taser)
 						data.hitgroup = 0;
 
-					scale_dmg(data.hit_player, cur_dmg, wpn_data->armor_ratio, wpn_data->crosshair_delta_distance, data.hitgroup);
+					this->scale_dmg(data.hit_player, cur_dmg, wpn_data->armor_ratio, wpn_data->crosshair_delta_distance, data.hitgroup);
 
 					data.dmg = static_cast<int>(cur_dmg);
 

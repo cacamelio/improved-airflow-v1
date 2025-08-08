@@ -452,7 +452,7 @@ namespace rage_tools
 		if (debug_hitchance)
 		{
 			current_spread = g_ctx.spread;
-			g_render->world_to_screen(point.position, spread_point);
+			g_render.world_to_screen(point.position, spread_point);
 		}
 #endif
 		if (!g_rage_bot->weapon_config.strict_mode)
@@ -480,7 +480,7 @@ namespace rage_tools
 			if (debug_hitchance)
 			{
 				vector2d scr_end;
-				if (g_render->world_to_screen(end, scr_end))
+				if (g_render.world_to_screen(end, scr_end))
 					spread_points.emplace_back(scr_end);
 			}
 #endif

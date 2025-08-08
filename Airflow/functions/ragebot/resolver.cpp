@@ -98,29 +98,29 @@ namespace resolver
 		std::memcpy(predicted_matrix, cache.base(), sizeof(predicted_matrix));
 
 		auto store_changed_matrix_data = [&](const vector3d& new_position, pen_data_t& out)
+		{
+			auto old_abs_origin = player->get_abs_origin();
+
+			math::change_matrix_position(predicted_matrix, 128, player->origin(), new_position);
 			{
-				auto old_abs_origin = player->get_abs_origin();
-
-				math::change_matrix_position(predicted_matrix, 128, player->origin(), new_position);
+				static matrix3x4_t old_cache[128]{};
+				player->store_bone_cache(old_cache);
 				{
-					static matrix3x4_t old_cache[128]{};
-					player->store_bone_cache(old_cache);
-					{
-						player->set_abs_origin(new_position);
-						player->set_bone_cache(predicted_matrix);
+					player->set_abs_origin(new_position);
+					player->set_bone_cache(predicted_matrix);
 
-						auto head_pos = cache.base()[8].get_origin();
-						out = g_auto_wall->fire_bullet(g_ctx.local, player, g_ctx.weapon_info, false, g_ctx.eye_position, head_pos);
+					auto head_pos = cache.base()[8].get_origin();
+					out = g_auto_wall->fire_bullet(g_ctx.local, player, g_ctx.weapon_info, false, g_ctx.eye_position, head_pos);
 
-						//	interfaces::debug_overlay->add_text_overlay(head_pos, 0.1f, "%d", out.dmg);
-					}
-					player->set_bone_cache(old_cache);
+				//	interfaces::debug_overlay->add_text_overlay(head_pos, 0.1f, "%d", out.dmg);
 				}
-				math::change_matrix_position(predicted_matrix, 128, new_position, player->origin());
-			};
+				player->set_bone_cache(old_cache);
+			}
+			math::change_matrix_position(predicted_matrix, 128, new_position, player->origin());
+		};
 
 		{
-
+		
 			pen_data_t left{}, right{};
 
 			auto left_dir = inverse_side ? (player->origin() + direction * 40.f) : (player->origin() - direction * 40.f);
@@ -176,8 +176,13 @@ namespace resolver
 
 			float avg_yaw = math::normalize(math::rad_to_deg(std::atan2f((_first_angle + _second_angle) / 2.f, (__first_angle + __second_angle) / 2.f)));
 			float diff = math::normalize(current->eye_angles.y - avg_yaw);
-
-			info.side = diff > 0.f ? side_right : side_left;
+			
+			if (diff > 0.f)
+				info.side = side_right;
+			else if (diff < 0.f)
+				info.side = side_left;
+			else
+				info.side = side_zero;
 			info.resolved = true;
 			info.mode = xor_c("jitter");
 		}

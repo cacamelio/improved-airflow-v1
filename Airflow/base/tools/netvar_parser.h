@@ -151,7 +151,6 @@ namespace offsets
 	inline uintptr_t m_bDucked{};
 	inline uintptr_t m_ubEFNoInterpParity{};
 	inline uintptr_t m_ubEFNoInterpParityOld{};
-	inline uintptr_t m_vecLadderNormal{};
 }
 
 class c_netvar_manager

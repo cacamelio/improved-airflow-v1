@@ -243,6 +243,7 @@ private:
 	void player_hurt(c_game_event* event);
 	void round_start(c_game_event* event);
 
+	void predict_eye_pos();
 public:
 	int missed_shots[65]{};
 	restore_record_t backup[65]{};

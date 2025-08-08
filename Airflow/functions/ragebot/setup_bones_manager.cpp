@@ -7,7 +7,6 @@
 
 #include "animfix.h"
 #include "../features.h"
-#include "../../base/ik_solver.hpp"
 
 namespace bone_merge
 {
@@ -166,6 +165,7 @@ void c_bone_builder::setup()
 
 	animating->model_recent_bone_counter() = *(uint32_t*)model_bone_counter;
 
+	// new bones func from 21.09 update
 	const auto old_eye_angles = animating->eye_angles();
 	animating->eye_angles() = this->eye_angles;
 
@@ -234,60 +234,60 @@ void c_bone_builder::get_skeleton(vector3d* position, quaternion* q)
 		world_weapon = (c_csplayer*)weapon->get_weapon_world_model();
 
 	auto wrong_weapon = [&]()
+	{
+		if (can_be_animated(animating) && world_weapon)
 		{
-			if (can_be_animated(animating) && world_weapon)
+			uintptr_t bone_merge = bone_merge::get_bone_merge(world_weapon);
+			if (bone_merge)
 			{
-				uintptr_t bone_merge = bone_merge::get_bone_merge(world_weapon);
-				if (bone_merge)
+				merge_matching_poses(bone_merge, poses_world.data(), poses.data());
+
+				c_studiohdr* world_hdr = world_weapon->get_studio_hdr();
+
+				world_ik->constructor();
+				world_ik->init(world_hdr, &angles, &origin, time, 0, bone_used_by_bone_merge);
+
+				alignas(16) char buffer2[32];
+				alignas(16) bone_setup_t* world_setup = (bone_setup_t*)&buffer2;
+
+				world_setup->hdr = world_hdr;
+				world_setup->mask = bone_used_by_bone_merge;
+				world_setup->pose_parameter = poses_world.data();
+				world_setup->pose_debugger = nullptr;
+
+				world_setup->init_pose(new_position, new_q, world_hdr);
+
+				for (int i = 0; i < layer_count; ++i)
 				{
-					merge_matching_poses(bone_merge, poses_world.data(), poses.data());
+					c_animation_layers* layer = &layers[i];
 
-					c_studiohdr* world_hdr = world_weapon->get_studio_hdr();
-
-					world_ik->constructor();
-					world_ik->init(world_hdr, &angles, &origin, time, 0, bone_used_by_bone_merge);
-
-					alignas(16) char buffer2[32];
-					alignas(16) bone_setup_t* world_setup = (bone_setup_t*)&buffer2;
-
-					world_setup->hdr = world_hdr;
-					world_setup->mask = bone_used_by_bone_merge;
-					world_setup->pose_parameter = poses_world.data();
-					world_setup->pose_debugger = nullptr;
-
-					world_setup->init_pose(new_position, new_q, world_hdr);
-
-					for (int i = 0; i < layer_count; ++i)
+					if (layer && layer->sequence > 1 && layer->weight > 0.f)
 					{
-						c_animation_layers* layer = &layers[i];
+						if (dispatch && animating == g_ctx.local)
+							animating->update_dispatch_layer(layer, world_hdr, layer->sequence);
 
-						if (layer && layer->sequence > 1 && layer->weight > 0.f)
+						if (!dispatch || layer->second_dispatch_sequence <= 0 || layer->second_dispatch_sequence >= (*(studio_hdr_t**)world_hdr)->local_seq)
+							bone_setup->accumulate_pose(position, q, layer->sequence, layer->cycle, layer->weight, time, ik_context);
+						else if (dispatch)
 						{
-							if (dispatch && animating == g_ctx.local)
-								animating->update_dispatch_layer(layer, world_hdr, layer->sequence);
+							func_ptrs::copy_from_follow(bone_merge, position, q, bone_used_by_bone_merge, new_position, new_q);
 
-							if (!dispatch || layer->second_dispatch_sequence <= 0 || layer->second_dispatch_sequence >= (*(studio_hdr_t**)world_hdr)->local_seq)
-								bone_setup->accumulate_pose(position, q, layer->sequence, layer->cycle, layer->weight, time, ik_context);
-							else if (dispatch)
-							{
-								func_ptrs::copy_from_follow(bone_merge, position, q, bone_used_by_bone_merge, new_position, new_q);
+							if (ik_context)
+								func_ptrs::add_dependencies(ik_context, *(float*)((uintptr_t)animating + 0xA14), layer->sequence, layer->cycle, poses.data(), layer->weight);
 
-								if (ik_context)
-									func_ptrs::add_dependencies(ik_context, *(float*)((uintptr_t)animating + 0xA14), layer->sequence, layer->cycle, poses.data(), layer->weight);
+							world_setup->accumulate_pose(new_position, new_q, layer->second_dispatch_sequence, layer->cycle, layer->weight, time, world_ik);
 
-								world_setup->accumulate_pose(new_position, new_q, layer->second_dispatch_sequence, layer->cycle, layer->weight, time, world_ik);
-
-								func_ptrs::copy_to_follow(bone_merge, new_position, new_q, bone_used_by_bone_merge, position, q);
-							}
+							func_ptrs::copy_to_follow(bone_merge, new_position, new_q, bone_used_by_bone_merge, position, q);
 						}
 					}
-
-					world_ik->destructor();
-					return false;
 				}
+
+				world_ik->destructor();
+				return false;
 			}
-			return true;
-		};
+		}
+		return true;
+	};
 
 	if (wrong_weapon())
 	{

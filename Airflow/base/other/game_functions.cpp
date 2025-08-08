@@ -40,7 +40,6 @@ namespace func_ptrs
 	get_viewmodel_fn get_viewmodel{};
 	calc_absolute_position_fn calc_absolute_position{};
 	lookup_sequence_fn lookup_sequence{};
-	set_abs_velocity_fn set_abs_velocity{};
 
 	bool* override_processing{};
 	int smoke_count{};
@@ -83,7 +82,6 @@ namespace func_ptrs
 		get_viewmodel = patterns::get_viewmodel.as< get_viewmodel_fn >();
 		calc_absolute_position = patterns::calc_absolute_position.as< calc_absolute_position_fn >();
 		lookup_sequence = patterns::lookup_sequence.as< lookup_sequence_fn >();
-		set_abs_velocity = patterns::set_abs_velocity.as< set_abs_velocity_fn >();
 
 		override_processing = *patterns::disable_post_process.as< bool** >();
 		smoke_count = *patterns::remove_smoke.as< int* >();

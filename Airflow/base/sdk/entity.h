@@ -274,31 +274,6 @@ public:
 	}
 };
 
-class VarMapEntry_t
-{
-public:
-	unsigned short type;
-	unsigned short m_bNeedsToInterpolate;
-
-	void* data;
-	void* watcher;
-};
-
-
-struct VarMapping_t
-{
-	VarMapping_t()
-	{
-		m_Entries = nullptr;
-		m_nInterpolatedEntries = 0;
-		m_lastInterpolationTime = 0.0f;
-	}
-
-	VarMapEntry_t* m_Entries;
-	int m_nInterpolatedEntries;
-	float m_lastInterpolationTime;
-};
-
 class c_bone_accessor {
 public:
 	alignas(16) matrix3x4_t* bones{};
@@ -799,7 +774,6 @@ public:
 	netvar_ref(view_punch_angle, vector3d, offsets::m_viewPunchAngle)
 	netvar_ref(aim_punch_angle, vector3d, offsets::m_aimPunchAngle)
 	netvar_ref(base_velocity, vector3d, offsets::m_vecBaseVelocity)
-	netvar_ref(ladder_normal, vector3d, offsets::m_vecLadderNormal)
 	netvar_ref(collision_change_origin, vector3d, 0x9920)
 	netvar_ref(abs_velocity, vector3d, find_in_datamap(get_pred_desc_map(), xor_c("m_vecAbsVelocity")))
 	netvar_ref(network_origin, vector3d, find_in_datamap(get_pred_desc_map(), xor_c("m_vecNetworkOrigin")))
@@ -818,7 +792,6 @@ public:
 	netvar_ref(explode_effect_tick_begin, int, offsets::m_nExplodeEffectTickBegin)
 	netvar_ref(observer_mode, int, offsets::m_iObserverMode)
 	netvar_ref(move_state, int, offsets::m_iMoveState)
-	netvar_ref(move_type, int, 0x25C)
 	netvar_ref(ik_context, int, 0x2670)
 	netvar_ref(default_fov, int, offsets::m_iDefaultFOV)
 	netvar_ref(old_buttons, int, find_in_datamap(get_pred_desc_map(), xor_c("m_nOldButtons")))
@@ -1032,7 +1005,6 @@ public:
 	vector3d get_hitbox_position(int hitbox = 0, matrix3x4_t* matrix = nullptr);
 
 	c_csplayer* get_observer_target();
-	VarMapping_t* var_mapping();
 	c_csplayer* get_ragdoll();
 	bool should_fix_modify_eye_pos();
 	c_basecombatweapon* get_active_weapon();

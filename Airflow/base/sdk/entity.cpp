@@ -6,11 +6,6 @@
 
 #include "../../functions/features.h"
 
-VarMapping_t* c_csplayer::var_mapping()
-{
-	return reinterpret_cast<VarMapping_t*>((DWORD)this + 0x24);
-}
-
 c_baseentity* c_baseentity::get_move_parent()
 {
 	c_baseentity* move_parent = (c_baseentity*)interfaces::entity_list->get_entity_handle(this->move_parent());
@@ -280,6 +275,8 @@ void c_csplayer::force_update()
 		layer->owner = this;
 		layer->studio_hdr = this->get_studio_hdr();
 	}
+
+	server_animations::setup_lean(state, this->anim_overlay());
 
 	bool old_update = this->client_side_animation();
 
